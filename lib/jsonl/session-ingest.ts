@@ -16,8 +16,11 @@ export interface IngestItem {
   input?: unknown
   result?: string
   agentId?: string
+  /** For items inside a subagent transcript: the subagent that ran them. */
+  ownerAgentId?: string
   subagentType?: string
   description?: string
+  ts?: string
 }
 
 export interface ChunkDraft {

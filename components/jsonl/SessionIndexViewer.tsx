@@ -12,6 +12,7 @@ import {
   Hash,
   Layers,
   ListTree,
+  Activity,
   Share2,
   Loader2,
   MessageSquare,
@@ -40,11 +41,12 @@ import {
 } from '@/lib/jsonl/session-index-client'
 import { Highlight, SessionItems } from '@/components/jsonl/SessionBlocks'
 import { SessionGraphView } from '@/components/jsonl/SessionGraphView'
+import { SessionTimeline } from '@/components/jsonl/SessionTimeline'
 import { nodeViewTarget } from '@/lib/jsonl/graph-layout'
 import { parseParentId } from '@/lib/jsonl/session-jump'
 
 type View = { kind: 'turn'; i: number } | { kind: 'agent'; id: string }
-type Tab = 'turns' | 'agents' | 'graph' | 'search'
+type Tab = 'turns' | 'agents' | 'timeline' | 'graph' | 'search'
 
 export default function SessionIndexViewer({ initialSessionId }: { initialSessionId?: string }) {
   const [catalog, setCatalog] = useState<{ sessions: Array<{ id: string; title?: string; counts: { turns: number; toolCalls: number; agents: number }; sessionStart?: string; models: string[]; bytes: number }> } | null>(null)
@@ -411,8 +413,8 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
         </div>
 
         {/* Tabs */}
-        <div className="p-2 grid grid-cols-4 gap-1 border-b border-everforest-bg4">
-          {(['turns', 'agents', 'graph', 'search'] as Tab[]).map((value) => (
+        <div className="p-2 grid grid-cols-5 gap-1 border-b border-everforest-bg4">
+          {(['turns', 'agents', 'timeline', 'graph', 'search'] as Tab[]).map((value) => (
             <button
               key={value}
               type="button"
@@ -425,7 +427,7 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
                 tab === value ? 'bg-everforest-bg3 text-everforest-fg' : 'text-everforest-grey1 hover:bg-everforest-bg1',
               )}
             >
-              {value === 'turns' ? <ListTree className="w-3.5 h-3.5" /> : value === 'agents' ? <Bot className="w-3.5 h-3.5" /> : value === 'graph' ? <Share2 className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
+              {value === 'turns' ? <ListTree className="w-3.5 h-3.5" /> : value === 'agents' ? <Bot className="w-3.5 h-3.5" /> : value === 'timeline' ? <Activity className="w-3.5 h-3.5" /> : value === 'graph' ? <Share2 className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
               {value}
             </button>
           ))}
@@ -604,13 +606,29 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
             <div className="flex items-center gap-2 text-everforest-grey1 text-sm"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>
           )}
 
+          {tab === 'timeline' && manifest && (
+            <div className="max-w-6xl mx-auto">
+              <SessionTimeline
+                manifest={manifest}
+                onOpenTurn={(i) => {
+                  setTab('turns')
+                  goTurn(i)
+                }}
+                onOpenAgent={(id) => {
+                  setTab('turns')
+                  void openView({ kind: 'agent', id })
+                }}
+              />
+            </div>
+          )}
+
           {tab === 'graph' && sessionId && (
             <div className="max-w-5xl mx-auto">
               <SessionGraphView sessionId={sessionId} onOpenNode={openGraphNode} />
             </div>
           )}
 
-          {tab !== 'graph' && !loadingView && currentTurn && (
+          {tab !== 'graph' && tab !== 'timeline' && !loadingView && currentTurn && (
             <TurnBody
               turn={currentTurn}
               query={query}
@@ -619,7 +637,7 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
             />
           )}
 
-          {tab !== 'graph' && !loadingView && currentAgent && (
+          {tab !== 'graph' && tab !== 'timeline' && !loadingView && currentAgent && (
             <div className="space-y-3">
               <div className="rounded-lg border border-everforest-aqua/30 bg-everforest-bg1/60 px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2 mb-2">

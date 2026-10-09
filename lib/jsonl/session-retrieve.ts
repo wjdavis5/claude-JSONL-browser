@@ -252,6 +252,29 @@ function nodeLabel(id: string): string {
   return second >= 0 ? rest.slice(second + 1) : rest
 }
 
+function parseProps(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** Prefer stored, human-readable node props (tool name + summary) over the internal id. */
+function labelFromProps(id: string, props: Record<string, unknown> | null): string {
+  if (props) {
+    const name = typeof props.name === 'string' ? props.name : ''
+    const summary = typeof props.summary === 'string' ? props.summary : ''
+    if (name && summary) return `${name}: ${summary}`
+    if (name) return name
+    if (typeof props.description === 'string' && props.description) return props.description
+    if (typeof props.subagentType === 'string' && props.subagentType) return props.subagentType
+    if (typeof props.path === 'string') return props.path
+  }
+  return nodeLabel(id)
+}
+
 function collectGraph(db: DatabaseSync, ids: string[], limit: number): { nodes: GraphNodeView[]; edges: GraphEdgeView[]; truncated: boolean } {
   const edges = ids.length
     ? (db
@@ -293,8 +316,9 @@ const KIND_QUOTA: Record<string, number> = { session: 1, agent: 200, file: 120, 
 export function readSessionGraph(db: DatabaseSync, sessionId: string, options: { limit?: number } = {}): SessionGraphView {
   const limit = options.limit ?? 400
   const sid = escapeLike(sessionId)
-  const nodeRows = db.prepare('SELECT id, kind FROM nodes').all() as unknown as Array<{ id: string; kind: string }>
+  const nodeRows = db.prepare('SELECT id, kind, props FROM nodes').all() as unknown as Array<{ id: string; kind: string; props: string | null }>
   const kindById = new Map(nodeRows.map((row) => [row.id, row.kind]))
+  const propsById = new Map(nodeRows.map((row) => [row.id, parseProps(row.props)]))
   const isSessionNode = (id: string): boolean =>
     id === `session:${sessionId}` || id.startsWith(`tool:${sessionId}:`) || id.startsWith(`agent:${sessionId}:`)
   const edgeRows = db
@@ -333,7 +357,7 @@ export function readSessionGraph(db: DatabaseSync, sessionId: string, options: {
   if (remaining > 0) chosen.push(...(byKind.get('tool') ?? []).sort(byDegree).slice(0, remaining))
 
   const keep = new Set(chosen)
-  const nodes = chosen.map((id) => ({ id, kind: kindById.get(id) ?? 'unknown', label: nodeLabel(id), degree: degree.get(id) ?? 0 }))
+  const nodes = chosen.map((id) => ({ id, kind: kindById.get(id) ?? 'unknown', label: labelFromProps(id, propsById.get(id) ?? null), degree: degree.get(id) ?? 0 }))
   const edges = edgeRows
     .filter((edge) => keep.has(edge.from_id) && keep.has(edge.to_id))
     .map((edge) => ({ from: edge.from_id, to: edge.to_id, type: edge.type }))

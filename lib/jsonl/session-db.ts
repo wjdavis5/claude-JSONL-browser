@@ -148,7 +148,10 @@ export interface GraphItem {
   name?: string
   input?: unknown
   result?: string
+  text?: string
   agentId?: string
+  /** Subagent that ran this item (items inside a subagent transcript). */
+  ownerAgentId?: string
   subagentType?: string
   description?: string
   meta?: Record<string, unknown>
@@ -215,6 +218,20 @@ export function extractPullRequests(item: GraphItem): Array<{ repo: string; numb
   return found
 }
 
+/** Short human-readable summary of an item (command, path, or first line of output). */
+export function itemSummary(item: GraphItem): string {
+  const input = item.input as Record<string, unknown> | undefined
+  if (input && typeof input === 'object') {
+    for (const key of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'description', 'prompt']) {
+      const value = input[key]
+      if (typeof value === 'string' && value) return value.replace(/\s+/g, ' ').slice(0, 60)
+    }
+  }
+  if (item.result) return item.result.replace(/\s+/g, ' ').slice(0, 60)
+  if (item.text) return item.text.replace(/\s+/g, ' ').slice(0, 60)
+  return ''
+}
+
 /**
  * Extract the nodes and edges a single item contributes. `parentId` is the
  * viewer jump target; the item's tool/agent node id derives from it so a graph
@@ -226,8 +243,10 @@ export function extractItemGraph(item: GraphItem, context: GraphItemContext): { 
   const sessionNode = graphNodeId('session', context.sessionId)
   const nodeKind: GraphNodeKind = item.k === 'agent' ? 'agent' : 'tool'
   const itemNode = graphNodeId(nodeKind, `${context.sessionId}:${context.parentId}`)
-  nodes.push({ id: itemNode, kind: nodeKind, props: { name: item.name, kind: item.k } })
-  edges.push({ from: sessionNode, to: itemNode, type: 'has' })
+  nodes.push({ id: itemNode, kind: nodeKind, props: { name: item.name, kind: item.k, summary: itemSummary(item), ts: item.ts } })
+  // Items belong to the subagent that ran them, not the session hub.
+  if (item.ownerAgentId) edges.push({ from: graphNodeId('agent', item.ownerAgentId), to: itemNode, type: 'uses' })
+  else edges.push({ from: sessionNode, to: itemNode, type: 'has' })
 
   if (item.k === 'agent' && item.agentId) {
     const agentNode = graphNodeId('agent', item.agentId)

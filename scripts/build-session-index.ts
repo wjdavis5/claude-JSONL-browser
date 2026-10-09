@@ -167,9 +167,11 @@ async function buildDatabase(sessionId: string, items: IngestItem[], manifest: S
           input: item.input,
           result: item.result,
           agentId: item.agentId,
+          ownerAgentId: item.ownerAgentId,
           subagentType: item.subagentType,
           description: item.description,
           text: item.text,
+          ts: item.ts,
         } as GraphItem,
         parentId: item.parentId,
       })),
@@ -239,8 +241,10 @@ async function main() {
             result: item.result,
             text: item.text,
             agentId: item.agentId,
+            ownerAgentId: id,
             subagentType: item.subagentType,
             description: item.description,
+            ts: item.ts,
           })
         })
         agentHeaders.push(built.header)
@@ -320,6 +324,7 @@ async function main() {
           agentId: item.agentId,
           subagentType: item.subagentType,
           description: item.description,
+          ts: item.ts,
         })
       })
     }
