@@ -47,6 +47,12 @@ describe('session database schema', () => {
     db.close()
   })
 
+  it('raises rebuild-required when reopened with different vector dimensions', () => {
+    const path = tempDbPath()
+    openDatabase(path, { vectorDims: 2 }).db.close()
+    expect(() => openDatabase(path, { vectorDims: 8 })).toThrow(RebuildRequiredError)
+  })
+
   it('keeps FTS5 openable when the vector extension fails to load', () => {
     const { db, vecAvailable, vecError } = openDatabase(tempDbPath(), {
       loadVec: () => {
