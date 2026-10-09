@@ -4,7 +4,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
-const OPERATIONS = new Set(['search'])
+const OPERATIONS = new Set(['search', 'graph'])
 
 function forbidden(reason: string): Response {
   return Response.json({ error: reason }, { status: 403 })
@@ -45,7 +45,7 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
   const graph = url.searchParams.get('graph') === '1'
 
   const { openDatabase } = await import('../../../../lib/jsonl/session-db-node')
-  const { hybridSearch, graphExpandedSearch } = await import('../../../../lib/jsonl/session-retrieve')
+  const { hybridSearch, graphExpandedSearch, readSessionGraph } = await import('../../../../lib/jsonl/session-retrieve')
   const { createLmStudioEmbedder } = await import('../../../../lib/jsonl/session-embed')
 
   let opened: ReturnType<typeof openDatabase>
@@ -56,6 +56,10 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
   }
   const db = opened.db
   try {
+    if (operation === 'graph') {
+      if (!sessionId) return Response.json({ error: 'sessionId required' }, { status: 400 })
+      return Response.json(readSessionGraph(db, sessionId, { limit: k * 5 }))
+    }
     let vector: Float32Array | undefined
     try {
       const embedder = createLmStudioEmbedder()

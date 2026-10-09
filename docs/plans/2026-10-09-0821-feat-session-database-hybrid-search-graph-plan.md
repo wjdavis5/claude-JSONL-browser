@@ -67,7 +67,10 @@ The current index is a per-session set of static JSON files: `search.json` is a 
 - R15. Schema migration runs in a single transaction and is DDL-only (cheap at any size); a failed migration leaves the prior version intact and openable, and an integrity check runs on open.
 - R16. Ingest is single-writer under a cross-process advisory lock: a concurrent build cannot interleave, and readers tolerate a build swap or in-progress upsert without corruption.
 - R17. Removed or renamed sessions are pruned from the store, with their chunk, vector, and graph rows reconciled in the same transaction.
-- R18. The local retrieval API enforces a defined security boundary: it fails closed unless bound to loopback, authenticates via a per-run token delivered server-side (httpOnly cookie or server-injected value, never in the client bundle or a URL), validates origin and host, binds all query parameters with an escaped FTS5 term, loads a pinned `sqlite-vec` from a fixed path, and refuses a non-loopback LM Studio endpoint.
+- R18. The local retrieval API enforces a defined boundary without authentication (a local single-user app): it fails closed unless bound to loopback, validates host and origin, binds all query parameters with an escaped FTS5 term, loads a pinned `sqlite-vec` from a fixed path, and refuses a non-loopback LM Studio endpoint.
+- R19. A `graph` operation exposes a session's nodes and edges to the viewer, capped so a large session cannot overwhelm the response.
+- R20. The viewer renders an interactive graph layout of the session — nodes colored by kind, click a node to jump to its turn or agent, and kind filters — so a long session with many agents and tool calls can be understood visually.
+- R21. The viewer surfaces provenance on every block (its result pair, touched file, sibling agents, other sessions), a neighborhood lens, a duplicate-work rail, facet filters, and a session scope toggle.
 
 ### Key Decisions
 
@@ -118,6 +121,7 @@ The current index is a per-session set of static JSON files: `search.json` is a 
 - KTD10. **WAL + single-writer for incremental runs; atomic file swap for full rebuilds.** Incremental upserts run in WAL transactions under a cross-process single-writer advisory lock; a full rebuild checkpoints to `journal_mode=DELETE` (collapsing to one file), runs `PRAGMA integrity_check`, and atomically renames that one file. A live database is never renamed, and build-to-temp is not used for small deltas (that would be O(database size), not O(delta)). Readers never observe a torn transaction.
 - KTD11. **Single SQLite file per corpus; cross-session edges live in it.** One database file holds the per-session chunk text and vectors alongside the shared graph, so cross-session edges and within-session retrieval share one rowid space and one transaction (honoring KD1 and R1). Per-session partitioning is a deferred optimization if a single file's size proves unmanageable.
 - KTD12. **Two independent versions: schema and embedding.** `SESSION_INDEX_VERSION` gates schema shape; `embedding_model_id` + `dims` + `chunker_version` gate vector reuse, so swapping the model or chunker re-embeds without a schema migration, and a schema bump never silently reuses vectors.
+- KTD13. **The local retrieval API is unauthenticated by design.** (session-settled: user-directed — chosen over a per-run bearer token: this is a local single-user app and auth adds friction without a threat model.) It still binds loopback and validates host/origin; no token, cookie, or credential is added.
 
 ### High-Level Technical Design
 
@@ -352,6 +356,61 @@ U9 (feasibility spike) → U1 → U2 → U3 → U4 → U5 → U6 → U7, with U8
 - **Approach:** Prove that a route importing `node:sqlite` + `sqlite-vec` loads under `next dev` and `npm run build`; measure `vec0` scan latency at 22k / 220k / 2.2M vectors; measure LM Studio ms/chunk and confirm the loopback endpoint; confirm the no-database static fallback. If any of these fails, stop and re-scope (the plan's stop condition).
 - **Test expectation:** none — throwaway spike; the measurements are recorded and the throwaway code is removed before U1 lands (DoD cleanup criterion).
 - **Verification:** measured numbers recorded in the plan appendix; the build gate and the no-database fallback are confirmed.
+
+### U10. Graph API operation and client helper
+
+- **Goal:** Expose a session's graph to the viewer.
+- **Requirements:** R19
+- **Dependencies:** U1, U2, U6
+- **Files:** `app/api/session/[...path]/route.ts`, `lib/jsonl/session-retrieve.ts`, `lib/jsonl/session-index-client.ts`, `lib/jsonl/__tests__/session-graph-api.test.ts`
+- **Approach:** Add a `graph` operation to the existing route (fixed-operation enum, no auth) that reads `nodes`/`edges` for a session from the database, applies a node and edge cap with the highest-degree nodes kept, and returns `{ nodes, edges }`. Add `readSessionGraph(db, sessionId, {limit})` in `session-retrieve.ts` and a `fetchSessionGraph(sessionId)` client helper that returns `null` when the API/database is unavailable.
+- **Patterns to follow:** the existing `search` operation and `getJson`/`fetchHybridSearch` client seam.
+- **Test scenarios:**
+  - Happy path: a seeded session returns its nodes and edges.
+  - Edge case: a graph larger than the cap returns the capped set without error.
+  - Error path: a missing database returns `null` from the client helper.
+  - Integration: the `graph` operation and the `search` operation coexist on the same route.
+- **Verification:** `session-graph-api.test.ts` asserts node/edge retrieval and the cap.
+
+### U11. Graph explorer view
+
+- **Goal:** Render an interactive graph layout so a long session is understandable visually.
+- **Requirements:** R20
+- **Dependencies:** U10, U7
+- **Files:** `components/jsonl/SessionGraphView.tsx`, `components/jsonl/SessionIndexViewer.tsx`, `lib/jsonl/graph-layout.ts`, `lib/jsonl/__tests__/graph-layout.test.ts`
+- **Approach:** Add a `Graph` tab to the viewer. `SessionGraphView` fetches the session graph and lays it out with a deterministic, dependency-free force-directed simulation in `graph-layout.ts` (pure, seeded, bounded iterations), rendering an inline SVG: nodes colored by kind (session, agent, tool, file, pr, tool_result), sized by degree; edges as lines; pan/zoom via simple transforms; a kind legend and filters; clicking a node calls back to open the turn/agent it belongs to. When the graph is unavailable, show a message pointing at `npm run index`.
+- **Patterns to follow:** the viewer's `useState`-only state, Everforest tokens, and `openView`/hash navigation.
+- **Test scenarios:**
+  - Happy path: `computeLayout` places every node within the viewport bounds and is deterministic for a fixed seed.
+  - Edge case: an empty graph returns an empty layout without NaN.
+  - Error path: the graph-unavailable state renders the guidance message.
+  - Integration: clicking an item node yields the turn/agent view target.
+- **Verification:** `graph-layout.test.ts` asserts determinism, bounds, and the empty case; the viewer tab renders on `/sessions`.
+
+### U12. Provenance, neighborhood lens, duplicate-work rail, facets, scope toggle
+
+- **Goal:** Complete the deferred U7 navigation affordances.
+- **Requirements:** R21
+- **Dependencies:** U5, U11
+- **Files:** `components/jsonl/SessionIndexViewer.tsx`, `components/jsonl/SessionBlocks.tsx`, `lib/jsonl/session-retrieve.ts`, `lib/jsonl/__tests__/session-neighborhood.test.ts`
+- **Approach:** Add `neighborhood(db, nodeId)` and `duplicateWork(db, sessionId)` helpers returning connected nodes and near-duplicate agent pairs (shared file/behavioral signature). In the viewer: a scope toggle (this session / all sessions) on search; facet filter chips (kind, tool, agent type, model, error) applied to results; provenance affordances on each block linking to its result pair, touched files, sibling agents, and other sessions; a neighborhood panel for the selected node; and a duplicate-work rail from the helper.
+- **Patterns to follow:** the existing search tab, `jumpToResult`/`setHighlight`, and `SessionBlocks` rendering.
+- **Test scenarios:**
+  - Happy path: `neighborhood` returns the 1-hop neighbors of a node.
+  - Edge case: a node with no neighbors returns an empty set.
+  - Error path: `duplicateWork` on a session with no duplicates returns an empty list.
+  - Integration: a scope toggle of "all sessions" returns hits from more than one session.
+- **Verification:** `session-neighborhood.test.ts` asserts neighbor and duplicate-work results.
+
+### U13. Code-review fixes (no auth)
+
+- **Goal:** Resolve the applied review findings that do not involve authentication.
+- **Requirements:** R1–R21 (quality)
+- **Dependencies:** U1–U11
+- **Files:** `lib/jsonl/session-db-node.ts`, `lib/jsonl/session-ingest.ts`, `components/jsonl/SessionIndexViewer.tsx`, `lib/jsonl/__tests__/session-db.test.ts`
+- **Approach:** Gate a model/dimension change in `assertCompatible` (raise rebuild-required on a `vector_dims`/`embedding_model` mismatch); wrap `migrate()` in a single transaction; look up embedding reuse per chunk hash (indexed) instead of loading every complete chunk; abort the previous search request via `AbortController`; and return all chunks for a graph-reached parent rather than `LIMIT 1`.
+- **Test expectation:** covered by the existing and added unit tests; no new behavior surface.
+- **Verification:** existing tests plus the added assertions pass.
 
 ---
 

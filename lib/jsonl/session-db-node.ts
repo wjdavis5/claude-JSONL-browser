@@ -46,11 +46,18 @@ export function setMeta(db: DatabaseSync, key: string, value: string): void {
 
 export function migrate(db: DatabaseSync, options: { vecAvailable: boolean; vectorDims?: number }): void {
   const dims = options.vectorDims ?? VECTOR_DIMS
-  db.exec(BASE_SCHEMA_SQL)
-  if (options.vecAvailable) db.exec(vecSchemaSql(dims))
-  if (getMeta(db, META_SCHEMA_VERSION) === null) setMeta(db, META_SCHEMA_VERSION, String(SESSION_DB_VERSION))
-  setMeta(db, META_VEC_AVAILABLE, options.vecAvailable ? '1' : '0')
-  setMeta(db, META_VECTOR_DIMS, String(dims))
+  db.exec('BEGIN')
+  try {
+    db.exec(BASE_SCHEMA_SQL)
+    if (options.vecAvailable) db.exec(vecSchemaSql(dims))
+    if (getMeta(db, META_SCHEMA_VERSION) === null) setMeta(db, META_SCHEMA_VERSION, String(SESSION_DB_VERSION))
+    setMeta(db, META_VEC_AVAILABLE, options.vecAvailable ? '1' : '0')
+    setMeta(db, META_VECTOR_DIMS, String(dims))
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 export function assertCompatible(db: DatabaseSync): void {
@@ -60,6 +67,13 @@ export function assertCompatible(db: DatabaseSync): void {
 
 export function openDatabase(path: string, options: OpenOptions = {}): OpenResult {
   const db = new DatabaseSync(path, { allowExtension: true })
+  const dims = options.vectorDims ?? VECTOR_DIMS
+  let priorDims: string | null = null
+  try {
+    priorDims = getMeta(db, META_VECTOR_DIMS)
+  } catch {
+    priorDims = null
+  }
   let vecAvailable = false
   let vecError: string | undefined
   try {
@@ -80,7 +94,11 @@ export function openDatabase(path: string, options: OpenOptions = {}): OpenResul
   } catch {
     /* pragmas unsupported */
   }
-  migrate(db, { vecAvailable, vectorDims: options.vectorDims })
+  if (priorDims !== null && priorDims !== String(dims)) {
+    db.close()
+    throw new RebuildRequiredError(`vector dims ${priorDims}`)
+  }
+  migrate(db, { vecAvailable, vectorDims: dims })
   assertCompatible(db)
   try {
     chmodSync(path, 0o600)

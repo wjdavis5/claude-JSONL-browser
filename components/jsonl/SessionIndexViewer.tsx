@@ -12,6 +12,7 @@ import {
   Hash,
   Layers,
   ListTree,
+  Share2,
   Loader2,
   MessageSquare,
   Search,
@@ -36,10 +37,12 @@ import {
   type SearchPayload,
 } from '@/lib/jsonl/session-index-client'
 import { Highlight, SessionItems } from '@/components/jsonl/SessionBlocks'
+import { SessionGraphView } from '@/components/jsonl/SessionGraphView'
+import { nodeViewTarget } from '@/lib/jsonl/graph-layout'
 import { parseParentId } from '@/lib/jsonl/session-jump'
 
 type View = { kind: 'turn'; i: number } | { kind: 'agent'; id: string }
-type Tab = 'turns' | 'agents' | 'search'
+type Tab = 'turns' | 'agents' | 'graph' | 'search'
 
 export default function SessionIndexViewer({ initialSessionId }: { initialSessionId?: string }) {
   const [catalog, setCatalog] = useState<{ sessions: Array<{ id: string; title?: string; counts: { turns: number; toolCalls: number; agents: number }; sessionStart?: string; models: string[]; bytes: number }> } | null>(null)
@@ -232,9 +235,10 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
       return
     }
     let cancelled = false
+    const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      void fetchHybridSearch(sessionId, query, { graph: true }).then((hits) => {
-        if (cancelled) return
+      void fetchHybridSearch(sessionId, query, { graph: true, signal: controller.signal }).then((hits) => {
+        if (cancelled || controller.signal.aborted) return
         if (hits === null) {
           setHybridActive(false)
           setHybridHits(null)
@@ -247,6 +251,7 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
     return () => {
       cancelled = true
       window.clearTimeout(timer)
+      controller.abort()
     }
   }, [sessionId, query])
 
@@ -279,6 +284,22 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
     (hit: HybridSearchHit) => {
       const parsed = hit.parentId ? parseParentId(hit.parentId) : null
       if (!parsed) return
+      if ('agent' in parsed) {
+        void openView({ kind: 'agent', id: parsed.agent })
+        return
+      }
+      setHighlight({ turn: parsed.turn, item: parsed.item })
+      void openView({ kind: 'turn', i: parsed.turn })
+    },
+    [openView],
+  )
+
+  const openGraphNode = useCallback(
+    (nodeId: string) => {
+      const target = nodeViewTarget(nodeId)
+      const parsed = target ? parseParentId(target) : null
+      if (!parsed) return
+      setTab('turns')
       if ('agent' in parsed) {
         void openView({ kind: 'agent', id: parsed.agent })
         return
@@ -354,8 +375,8 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
         </div>
 
         {/* Tabs */}
-        <div className="p-2 grid grid-cols-3 gap-1 border-b border-everforest-bg4">
-          {(['turns', 'agents', 'search'] as Tab[]).map((value) => (
+        <div className="p-2 grid grid-cols-4 gap-1 border-b border-everforest-bg4">
+          {(['turns', 'agents', 'graph', 'search'] as Tab[]).map((value) => (
             <button
               key={value}
               type="button"
@@ -368,7 +389,7 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
                 tab === value ? 'bg-everforest-bg3 text-everforest-fg' : 'text-everforest-grey1 hover:bg-everforest-bg1',
               )}
             >
-              {value === 'turns' ? <ListTree className="w-3.5 h-3.5" /> : value === 'agents' ? <Bot className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
+              {value === 'turns' ? <ListTree className="w-3.5 h-3.5" /> : value === 'agents' ? <Bot className="w-3.5 h-3.5" /> : value === 'graph' ? <Share2 className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
               {value}
             </button>
           ))}
@@ -547,7 +568,13 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
             <div className="flex items-center gap-2 text-everforest-grey1 text-sm"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>
           )}
 
-          {!loadingView && currentTurn && (
+          {tab === 'graph' && sessionId && (
+            <div className="max-w-5xl mx-auto">
+              <SessionGraphView sessionId={sessionId} onOpenNode={openGraphNode} />
+            </div>
+          )}
+
+          {tab !== 'graph' && !loadingView && currentTurn && (
             <TurnBody
               turn={currentTurn}
               query={query}
@@ -556,7 +583,7 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
             />
           )}
 
-          {!loadingView && currentAgent && (
+          {tab !== 'graph' && !loadingView && currentAgent && (
             <div className="space-y-3">
               <div className="rounded-lg border border-everforest-aqua/30 bg-everforest-bg1/60 px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2 mb-2">

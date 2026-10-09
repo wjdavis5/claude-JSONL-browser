@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { graphNodeId } from './session-db.ts'
+import { graphNodeId, parseGraphNodeId } from './session-db.ts'
 
 export const RRF_K = 60
 /** sqlite-vec's default KNN k cap. */
@@ -134,6 +134,7 @@ export function traverse(
   const nodeBudget = options.nodeBudget ?? GRAPH_NODE_BUDGET
   const reach = new Map<string, number>()
   const queue: Array<[string, number]> = []
+  let head = 0
   for (const seed of seeds) {
     if (!reach.has(seed)) {
       reach.set(seed, 0)
@@ -141,8 +142,8 @@ export function traverse(
     }
   }
   const stmt = db.prepare('SELECT from_id, to_id FROM edges WHERE from_id = ? OR to_id = ?')
-  while (queue.length > 0 && reach.size < nodeBudget) {
-    const [node, depth] = queue.shift() as [string, number]
+  while (head < queue.length && reach.size < nodeBudget) {
+    const [node, depth] = queue[head++]
     if (depth >= maxDepth) continue
     const rows = stmt.all(node, node) as unknown as Array<{ from_id: string; to_id: string }>
     for (const edge of rows) {
@@ -156,20 +157,11 @@ export function traverse(
   return reach
 }
 
-function chunkForNode(db: DatabaseSync, nodeId: string): HybridHit | null {
-  const firstColon = nodeId.indexOf(':')
-  const kind = nodeId.slice(0, firstColon)
-  if (kind !== 'tool' && kind !== 'agent') return null
-  const rest = nodeId.slice(firstColon + 1)
-  const secondColon = rest.indexOf(':')
-  if (secondColon < 0) return null
-  const sessionId = rest.slice(0, secondColon)
-  const parentId = rest.slice(secondColon + 1)
-  const row = db
-    .prepare('SELECT id, parent_id, session_id, kind, text FROM chunks WHERE session_id = ? AND parent_id = ? LIMIT 1')
-    .get(sessionId, parentId) as unknown as ChunkMeta | undefined
-  if (!row) return null
-  return {
+function chunksForNode(statement: { all: (sessionId: string, parentId: string) => unknown }, nodeId: string): HybridHit[] {
+  const parts = parseGraphNodeId(nodeId)
+  if (!parts || (parts.kind !== 'tool' && parts.kind !== 'agent')) return []
+  const rows = statement.all(parts.sessionId, parts.key) as unknown as ChunkMeta[]
+  return rows.map((row) => ({
     id: Number(row.id),
     parentId: row.parent_id,
     sessionId: row.session_id,
@@ -177,7 +169,7 @@ function chunkForNode(db: DatabaseSync, nodeId: string): HybridHit | null {
     text: truncate(row.text, 400),
     score: 0,
     legs: [],
-  }
+  }))
 }
 
 export interface GraphSearchOptions extends HybridQuery {
@@ -202,13 +194,16 @@ export function graphExpandedSearch(db: DatabaseSync, query: GraphSearchOptions)
     .filter(([nodeId, hop]) => hop > 0 && (nodeId.startsWith('tool:') || nodeId.startsWith('agent:')))
     .sort((a, b) => a[1] - b[1])
   let added = 0
+  const chunkStmt = db.prepare('SELECT id, parent_id, session_id, kind, text FROM chunks WHERE session_id = ? AND parent_id = ?')
   for (const [nodeId] of reachable) {
     if (added >= k) break
-    const chunk = chunkForNode(db, nodeId)
-    if (!chunk || byId.has(chunk.id)) continue
-    chunk.legs = ['graph']
-    byId.set(chunk.id, chunk)
-    added += 1
+    for (const chunk of chunksForNode(chunkStmt, nodeId)) {
+      if (byId.has(chunk.id)) continue
+      chunk.legs = ['graph']
+      byId.set(chunk.id, chunk)
+      added += 1
+      if (added >= k) break
+    }
   }
 
   const graphWeight = query.graphWeight ?? 0.3
@@ -222,4 +217,116 @@ export function graphExpandedSearch(db: DatabaseSync, query: GraphSearchOptions)
   }
 
   return [...byId.values()].sort((a, b) => b.score - a.score).slice(0, k)
+}
+
+// ---------------------------------------------------------------------------
+// Graph views (nodes/edges for visualization and navigation)
+// ---------------------------------------------------------------------------
+
+export interface GraphNodeView {
+  id: string
+  kind: string
+  label: string
+  degree: number
+}
+
+export interface GraphEdgeView {
+  from: string
+  to: string
+  type: string
+}
+
+export interface SessionGraphView {
+  nodes: GraphNodeView[]
+  edges: GraphEdgeView[]
+  truncated: boolean
+  duplicates: DuplicateWorkGroup[]
+}
+
+function nodeLabel(id: string): string {
+  const colon = id.indexOf(':')
+  const kind = id.slice(0, colon)
+  const rest = id.slice(colon + 1)
+  if (kind === 'session' || kind === 'file' || kind === 'pr') return rest
+  const second = rest.indexOf(':')
+  return second >= 0 ? rest.slice(second + 1) : rest
+}
+
+function collectGraph(db: DatabaseSync, ids: string[], limit: number): { nodes: GraphNodeView[]; edges: GraphEdgeView[]; truncated: boolean } {
+  const edges = ids.length
+    ? (db
+        .prepare(`SELECT from_id, to_id, type FROM edges WHERE from_id IN (${ids.map(() => '?').join(',')}) AND to_id IN (${ids.map(() => '?').join(',')})`)
+        .all(...ids, ...ids) as unknown as Array<{ from_id: string; to_id: string; type: string }>)
+    : []
+  const degree = new Map<string, number>()
+  for (const edge of edges) {
+    degree.set(edge.from_id, (degree.get(edge.from_id) ?? 0) + 1)
+    degree.set(edge.to_id, (degree.get(edge.to_id) ?? 0) + 1)
+  }
+  const kindRows = ids.length
+    ? (db.prepare(`SELECT id, kind FROM nodes WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) as unknown as Array<{ id: string; kind: string }>)
+    : []
+  const kindById = new Map(kindRows.map((row) => [row.id, row.kind]))
+  let nodes: GraphNodeView[] = ids.map((id) => ({ id, kind: kindById.get(id) ?? 'unknown', label: nodeLabel(id), degree: degree.get(id) ?? 0 }))
+  let truncated = false
+  if (nodes.length > limit) {
+    truncated = true
+    nodes = nodes.sort((a, b) => b.degree - a.degree).slice(0, limit)
+  }
+  const keep = new Set(nodes.map((node) => node.id))
+  const keptEdges = edges.filter((edge) => keep.has(edge.from_id) && keep.has(edge.to_id)).map((edge) => ({ from: edge.from_id, to: edge.to_id, type: edge.type }))
+  return { nodes, edges: keptEdges, truncated }
+}
+
+function expandOnce(db: DatabaseSync, ids: string[]): string[] {
+  const set = new Set(ids)
+  const stmt = db.prepare('SELECT from_id, to_id FROM edges WHERE from_id = ? OR to_id = ?')
+  for (const id of ids) {
+    for (const edge of stmt.all(id, id) as unknown as Array<{ from_id: string; to_id: string }>) {
+      set.add(edge.from_id)
+      set.add(edge.to_id)
+    }
+  }
+  return [...set]
+}
+
+/** Escapes LIKE metacharacters so a session id cannot match other sessions' rows. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&')
+}
+
+/** Nodes and edges for one session (session + its item nodes + directly connected file/pr nodes). */
+export function readSessionGraph(db: DatabaseSync, sessionId: string, options: { limit?: number } = {}): SessionGraphView {
+  const limit = options.limit ?? 300
+  const sid = escapeLike(sessionId)
+  const seed = db
+    .prepare("SELECT id FROM nodes WHERE id = ? OR id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' LIMIT ?")
+    .all(`session:${sessionId}`, `tool:${sid}:%`, `agent:${sid}:%`, limit) as unknown as Array<{ id: string }>
+  const duplicates = duplicateWork(db, sessionId).slice(0, limit)
+  return { ...collectGraph(db, expandOnce(db, seed.map((row) => row.id)), limit), duplicates }
+}
+
+/** Bounded neighborhood of a node, for the viewer's neighborhood lens. */
+export function neighborhood(db: DatabaseSync, nodeId: string, options: { depth?: number; limit?: number } = {}): SessionGraphView {
+  const reach = traverse(db, [nodeId], { maxDepth: options.depth ?? 1, nodeBudget: options.limit ?? 200 })
+  return { ...collectGraph(db, [...reach.keys()], options.limit ?? 200), duplicates: [] }
+}
+
+export interface DuplicateWorkGroup {
+  file: string
+  tools: string[]
+}
+
+/** Files touched by more than one tool/agent in a session — a duplicate-work signal. */
+export function duplicateWork(db: DatabaseSync, sessionId: string): DuplicateWorkGroup[] {
+  const rows = db
+    .prepare("SELECT from_id AS tool, to_id AS file FROM edges WHERE type IN ('read','edit','write') AND from_id LIKE ? ESCAPE '\\'")
+    .all(`tool:${escapeLike(sessionId)}:%`) as unknown as Array<{ tool: string; file: string }>
+  const byFile = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const set = byFile.get(row.file) ?? new Set<string>()
+    set.add(nodeLabel(row.tool))
+    byFile.set(row.file, set)
+  }
+  return [...byFile.entries()].filter(([, tools]) => tools.size > 1).map(([file, tools]) => ({ file: nodeLabel(file), tools: [...tools] }))
 }

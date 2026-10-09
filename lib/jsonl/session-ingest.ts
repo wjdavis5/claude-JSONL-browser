@@ -73,13 +73,6 @@ function chunkKey(model: string, dims: number, text: string): string {
   return contentHash([model, String(dims), String(CHUNKER_VERSION), text])
 }
 
-interface ExistingRow {
-  text_hash: string
-  embedding_model: string | null
-  dims: number | null
-  id: number
-}
-
 function readVec(db: DatabaseSync, id: number): Float32Array | null {
   const row = db.prepare('SELECT embedding FROM vec_chunks WHERE id = ?').get(BigInt(id)) as { embedding?: Uint8Array } | undefined
   if (!row?.embedding) return null
@@ -98,20 +91,16 @@ export async function ingestSession(db: DatabaseSync, options: IngestOptions): P
   const drafts = chunkItems(items)
   const stats: IngestStats = { chunks: drafts.length, embedded: 0, reused: 0, partial: 0 }
 
-  const existing = new Map<string, number>()
-  const rows = db
-    .prepare("SELECT id, text_hash, embedding_model, dims FROM chunks WHERE embedding_status = 'complete'")
-    .all() as unknown as ExistingRow[]
-  for (const row of rows) {
-    if (row.embedding_model === embedder.model && row.dims === embedder.dims) existing.set(row.text_hash, row.id)
-  }
+  const lookup = db.prepare(
+    "SELECT id FROM chunks WHERE text_hash = ? AND embedding_model = ? AND dims = ? AND embedding_status = 'complete' LIMIT 1",
+  )
 
   const prepared: Array<{ draft: ChunkDraft; hash: string; vector: Float32Array }> = []
   const pending: Array<{ draft: ChunkDraft; hash: string }> = []
   for (const draft of drafts) {
     const hash = chunkKey(embedder.model, embedder.dims, draft.text)
-    const reusableId = existing.get(hash)
-    const vector = reusableId !== undefined ? readVec(db, reusableId) : null
+    const row = lookup.get(hash, embedder.model, embedder.dims) as { id: number } | undefined
+    const vector = row ? readVec(db, Number(row.id)) : null
     if (vector) {
       prepared.push({ draft, hash, vector })
       stats.reused += 1
@@ -167,7 +156,9 @@ export async function ingestSession(db: DatabaseSync, options: IngestOptions): P
     })
 
     // Prune chunks that this run no longer produces (edited/removed items).
-    const newKeys = new Set(drafts.map((draft) => `${draft.parentId}\u0000${chunkKey(embedder.model, embedder.dims, draft.text)}`))
+    const newKeys = new Set<string>()
+    for (const entry of prepared) newKeys.add(`${entry.draft.parentId}\u0000${entry.hash}`)
+    for (const entry of pending) newKeys.add(`${entry.draft.parentId}\u0000${entry.hash}`)
     const existingRows = db.prepare('SELECT id, parent_id, text_hash FROM chunks WHERE session_id = ?').all(sessionId) as unknown as Array<{
       id: number
       parent_id: string | null

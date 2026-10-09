@@ -69,16 +69,47 @@ export interface HybridSearchHit {
 export async function fetchHybridSearch(
   sessionId: string,
   query: string,
-  options: { k?: number; graph?: boolean } = {},
+  options: { k?: number; graph?: boolean; signal?: AbortSignal } = {},
 ): Promise<HybridSearchHit[] | null> {
   const params = new URLSearchParams({ sessionId, q: query, k: String(options.k ?? 20) })
   if (options.graph) params.set('graph', '1')
   try {
-    const response = await fetch(`/api/session/search?${params.toString()}`)
+    const response = await fetch(`/api/session/search?${params.toString()}`, { signal: options.signal })
     if (!response.ok) return null
     const json = (await response.json()) as { hits?: HybridSearchHit[] }
     // Empty hybrid results fall back to the static scan rather than hiding it.
     return json.hits && json.hits.length > 0 ? json.hits : null
+  } catch {
+    return null
+  }
+}
+
+export interface GraphNodeView {
+  id: string
+  kind: string
+  label: string
+  degree: number
+}
+
+export interface GraphEdgeView {
+  from: string
+  to: string
+  type: string
+}
+
+export interface SessionGraphView {
+  nodes: GraphNodeView[]
+  edges: GraphEdgeView[]
+  truncated: boolean
+  duplicates: Array<{ file: string; tools: string[] }>
+}
+
+/** Server-side session graph; returns null when the API/database is unavailable. */
+export async function fetchSessionGraph(sessionId: string, limit = 300): Promise<SessionGraphView | null> {
+  try {
+    const response = await fetch(`/api/session/graph?sessionId=${encodeURIComponent(sessionId)}&k=${limit}`)
+    if (!response.ok) return null
+    return (await response.json()) as SessionGraphView
   } catch {
     return null
   }

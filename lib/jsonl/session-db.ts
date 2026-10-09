@@ -158,6 +158,23 @@ export function graphNodeId(kind: GraphNodeKind, key: string): string {
   return `${kind}:${key}`
 }
 
+export interface GraphNodeIdParts {
+  kind: string
+  sessionId: string
+  key: string
+}
+
+/** Parses an item node id (`tool:<sessionId>:<parentId>` / `agent:<sessionId>:<parentId>`). */
+export function parseGraphNodeId(id: string): GraphNodeIdParts | null {
+  const first = id.indexOf(':')
+  if (first < 0) return null
+  const kind = id.slice(0, first)
+  const rest = id.slice(first + 1)
+  const second = rest.indexOf(':')
+  if (second < 0) return null
+  return { kind, sessionId: rest.slice(0, second), key: rest.slice(second + 1) }
+}
+
 const FILE_OP_BY_TOOL: Record<string, 'read' | 'edit' | 'write'> = {
   Read: 'read',
   Write: 'write',
