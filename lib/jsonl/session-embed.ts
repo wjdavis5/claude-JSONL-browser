@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { VECTOR_DIMS } from './session-db.ts'
 
 /** Bump when the chunking/extraction logic changes so vectors are re-derived. */
 export const CHUNKER_VERSION = 1
@@ -48,31 +49,35 @@ export interface LmStudioOptions {
 export function createLmStudioEmbedder(options: LmStudioOptions = {}): Embedder {
   const baseUrl = (options.baseUrl ?? 'http://localhost:1234').replace(/\/$/, '')
   const model = options.model ?? 'text-embedding-embeddinggemma-2'
-  const dims = options.dims ?? 256
+  const dims = options.dims ?? VECTOR_DIMS
+  const BATCH = 16
   return {
     model,
     dims,
     async embed(texts: string[]): Promise<Float32Array[]> {
       const vectors: Float32Array[] = []
-      for (const text of texts) {
-        vectors.push(await embedWithPrompt(`title: none | text: ${text}`))
+      for (let i = 0; i < texts.length; i += BATCH) {
+        vectors.push(...(await embedBatch(texts.slice(i, i + BATCH).map((text) => `title: none | text: ${text}`))))
       }
       return vectors
     },
     async embedQuery(text: string): Promise<Float32Array> {
-      return embedWithPrompt(`task: search result | query: ${text}`)
+      return (await embedBatch([`task: search result | query: ${text}`]))[0]
     },
   }
 
-  async function embedWithPrompt(input: string): Promise<Float32Array> {
+  async function embedBatch(inputs: string[]): Promise<Float32Array[]> {
     const response = await fetch(`${baseUrl}/v1/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input }),
+      body: JSON.stringify({ model, input: inputs }),
     })
     if (!response.ok) throw new Error(`LM Studio embeddings failed: ${response.status}`)
-    const json = (await response.json()) as { data: Array<{ embedding: number[] }> }
-    if (!json.data?.[0]?.embedding) throw new Error('LM Studio returned no embedding')
-    return truncateAndNormalize(json.data[0].embedding, dims)
+    const json = (await response.json()) as { data: Array<{ index?: number; embedding: number[] }> }
+    if (!json.data?.length) throw new Error('LM Studio returned no embedding')
+    return json.data
+      .slice()
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      .map((entry) => truncateAndNormalize(entry.embedding, dims))
   }
 }

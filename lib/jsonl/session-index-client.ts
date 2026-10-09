@@ -87,12 +87,6 @@ export function shardForTurn(turnIndex: number, shardSize: number): number {
   return Math.floor(turnIndex / Math.max(1, shardSize))
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 export function formatDuration(ms?: number): string {
   if (!ms) return '—'
   const seconds = Math.round(ms / 1000)

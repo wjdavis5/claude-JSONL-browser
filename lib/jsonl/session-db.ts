@@ -157,16 +157,21 @@ export function graphNodeId(kind: GraphNodeKind, key: string): string {
   return `${kind}:${key}`
 }
 
-const FILE_TOOLS = new Set(['Read', 'Write', 'MultiEdit', 'NotebookEdit', 'Edit'])
+const FILE_OP_BY_TOOL: Record<string, 'read' | 'edit' | 'write'> = {
+  Read: 'read',
+  Write: 'write',
+  Edit: 'edit',
+  MultiEdit: 'edit',
+  NotebookEdit: 'edit',
+}
 
 export function extractFileOps(item: GraphItem): Array<{ path: string; op: 'read' | 'edit' | 'write' }> {
   const input = item.input as Record<string, unknown> | undefined
   if (!item.name || !input || typeof input !== 'object') return []
   const rawPath = input.file_path ?? input.path ?? input.notebook_path
   if (typeof rawPath !== 'string' || !rawPath) return []
-  if (!FILE_TOOLS.has(item.name)) return []
-  const op: 'read' | 'edit' | 'write' =
-    item.name === 'Read' ? 'read' : item.name === 'Write' ? 'write' : item.name === 'Edit' || item.name === 'MultiEdit' || item.name === 'NotebookEdit' ? 'edit' : 'read'
+  const op = FILE_OP_BY_TOOL[item.name]
+  if (!op) return []
   return [{ path: rawPath, op }]
 }
 
@@ -178,9 +183,7 @@ export function extractPullRequests(item: GraphItem): Array<{ repo: string; numb
     .filter(Boolean)
     .join('\n')
   const found: Array<{ repo: string; number: string }> = []
-  let match: RegExpExecArray | null
-  PR_URL_RE.lastIndex = 0
-  while ((match = PR_URL_RE.exec(haystack)) !== null) {
+  for (const match of haystack.matchAll(PR_URL_RE)) {
     const repoMatch = haystack.slice(Math.max(0, match.index - 60), match.index + match[0].length).match(PR_REPO_RE)
     found.push({ repo: repoMatch?.[1] ?? 'unknown', number: match[1] })
   }
@@ -196,8 +199,9 @@ export function extractItemGraph(item: GraphItem, context: GraphItemContext): { 
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
   const sessionNode = graphNodeId('session', context.sessionId)
-  const itemNode = graphNodeId(item.k === 'agent' ? 'agent' : 'tool', `${context.sessionId}:${context.parentId}`)
-  nodes.push({ id: itemNode, kind: item.k === 'agent' ? 'agent' : 'tool', props: { name: item.name, kind: item.k } })
+  const nodeKind: GraphNodeKind = item.k === 'agent' ? 'agent' : 'tool'
+  const itemNode = graphNodeId(nodeKind, `${context.sessionId}:${context.parentId}`)
+  nodes.push({ id: itemNode, kind: nodeKind, props: { name: item.name, kind: item.k } })
   edges.push({ from: sessionNode, to: itemNode, type: 'has' })
 
   if (item.k === 'agent' && item.agentId) {

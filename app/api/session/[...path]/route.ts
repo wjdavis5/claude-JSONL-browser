@@ -41,7 +41,7 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
 
   const q = url.searchParams.get('q') ?? ''
   const sessionId = url.searchParams.get('sessionId') ?? undefined
-  const k = Math.min(Math.max(Number(url.searchParams.get('k') ?? 20) || 20, 1), 100)
+  const k = Math.min(Math.max(Number(url.searchParams.get('k')) || 20, 1), 100)
   const graph = url.searchParams.get('graph') === '1'
 
   const { openDatabase } = await import('../../../../lib/jsonl/session-db-node')
@@ -52,7 +52,7 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
   let vector: Float32Array | undefined
   try {
     const embedder = createLmStudioEmbedder()
-    vector = (await embedder.embedQuery?.(q)) ?? undefined
+    vector = await embedder.embedQuery?.(q)
   } catch {
     /* lexical-only when LM Studio is unavailable */
   }

@@ -123,11 +123,13 @@ export async function ingestSession(db: DatabaseSync, options: IngestOptions): P
     const insertVec = db.prepare('INSERT INTO vec_chunks(id, embedding) VALUES (?, ?)')
     const setComplete = db.prepare("UPDATE chunks SET embedding_status = 'complete' WHERE id = ?")
 
-    const writeComplete = (draft: ChunkDraft, hash: string, vector: Float32Array): void => {
-      const row = upsertChunk.get(sessionId, draft.parentId, draft.kind, draft.text, hash, 'complete', embedder.model, embedder.dims) as { id: number }
-      const id = Number(row.id)
+    const storeVector = (id: number, vector: Float32Array): void => {
       deleteVec.run(BigInt(id))
       insertVec.run(BigInt(id), vector)
+    }
+    const writeComplete = (draft: ChunkDraft, hash: string, vector: Float32Array): void => {
+      const row = upsertChunk.get(sessionId, draft.parentId, draft.kind, draft.text, hash, 'complete', embedder.model, embedder.dims) as { id: number }
+      storeVector(Number(row.id), vector)
     }
 
     const pendingIds: Array<{ id: number; draft: ChunkDraft; hash: string }> = []
@@ -149,8 +151,7 @@ export async function ingestSession(db: DatabaseSync, options: IngestOptions): P
         const vectors = await embedder.embed(pendingIds.map((entry) => entry.draft.text))
         pendingIds.forEach((entry, index) => {
           if (!vectors[index]) return
-          deleteVec.run(BigInt(entry.id))
-          insertVec.run(BigInt(entry.id), vectors[index])
+          storeVector(entry.id, vectors[index])
           setComplete.run(entry.id)
           stats.embedded += 1
         })

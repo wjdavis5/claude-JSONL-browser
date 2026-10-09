@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { graphNodeId } from './session-db.ts'
 
 export const RRF_K = 60
 /** sqlite-vec's default KNN k cap. */
@@ -65,9 +66,9 @@ export function hybridSearch(db: DatabaseSync, query: HybridQuery): HybridHit[] 
       try {
         const sql = `SELECT c.id, c.parent_id, c.session_id, c.kind, c.text
           FROM ${table} f JOIN chunks c ON c.id = f.rowid
-          WHERE ${table} MATCH ? ${query.sessionId ? 'AND c.session_id = ?' : ''}
+          WHERE ${table} MATCH ? AND (? IS NULL OR c.session_id = ?)
           ORDER BY f.rank LIMIT ?`
-        const rows = (query.sessionId ? db.prepare(sql).all(match, query.sessionId, legK) : db.prepare(sql).all(match, legK)) as unknown as ChunkMeta[]
+        const rows = db.prepare(sql).all(match, query.sessionId ?? null, query.sessionId ?? null, legK) as unknown as ChunkMeta[]
         addLeg(rows, leg)
       } catch {
         /* optional index unavailable */
@@ -114,7 +115,7 @@ export const GRAPH_NODE_BUDGET = 2000
 export function chunkToNodeId(chunk: { sessionId: string; parentId: string | null; kind: string }): string | null {
   if (!chunk.parentId) return null
   const kind = chunk.kind === 'agent' ? 'agent' : 'tool'
-  return `${kind}:${chunk.sessionId}:${chunk.parentId}`
+  return graphNodeId(kind, `${chunk.sessionId}:${chunk.parentId}`)
 }
 
 /** Bounded, cycle-safe BFS over `edges`; returns nodeId -> hop distance. */
@@ -188,7 +189,7 @@ export function graphExpandedSearch(db: DatabaseSync, query: GraphSearchOptions)
   const seeds = hits.map((h) => chunkToNodeId(h)).filter((id): id is string => Boolean(id))
   const reach = traverse(db, seeds, { maxDepth: query.maxDepth, nodeBudget: query.nodeBudget })
 
-  const byId = new Map<number, HybridHit>(hits.map((h) => [h.id, { ...h, legs: [...h.legs] }]))
+  const byId = new Map<number, HybridHit>(hits.map((h) => [h.id, h]))
 
   // Add graph-reachable chunks (nearest hops first), bounded by k additions.
   const reachable = [...reach.entries()]
