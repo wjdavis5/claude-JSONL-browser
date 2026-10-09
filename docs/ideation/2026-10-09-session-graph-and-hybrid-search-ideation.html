@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: A session database — hybrid search + knowledge graph</title>
+<style>
+  :root{
+    --bg:#2d353b; --bg-dim:#232a2e; --bg1:#343f44; --bg2:#3d484d; --bg3:#475258; --bg4:#4f585e;
+    --fg:#d3c6aa; --grey:#859289; --grey2:#9da9a0;
+    --green:#a7c080; --blue:#7fbbb3; --aqua:#83c092; --yellow:#dbbc7f; --purple:#d699b6; --red:#e67e80; --orange:#e69875;
+    --bg-green:#425047; --bg-blue:#3a515d; --bg-yellow:#4d4c43; --bg-purple:#543a48; --bg-red:#514045;
+    --maxw:980px; --prose:70ch;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--blue);text-decoration:none} a:hover{text-decoration:underline}
+  code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:.86em}
+  code{background:var(--bg1);border:1px solid var(--bg4);border-radius:4px;padding:.08em .35em;color:var(--aqua)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:40px 22px 80px}
+  header.doc{border-bottom:1px solid var(--bg4);padding-bottom:22px;margin-bottom:8px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--grey);margin:0 0 8px}
+  h1{font-size:clamp(24px,3.4vw,34px);line-height:1.2;margin:0 0 14px;font-weight:700;letter-spacing:-.01em}
+  h2{font-size:20px;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--bg4);font-weight:650}
+  h3{font-size:16.5px;margin:0 0 4px;font-weight:650}
+  p{margin:0 0 12px;max-width:var(--prose)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0}
+  .meta .pill{font-size:12.5px;background:var(--bg1);border:1px solid var(--bg4);border-radius:999px;padding:3px 11px;color:var(--grey2)}
+  .meta .pill b{color:var(--fg);font-weight:600}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:22px 0 6px}
+  .stat{background:var(--bg1);border:1px solid var(--bg4);border-radius:10px;padding:12px 14px}
+  .stat .n{font-size:24px;font-weight:700;color:var(--green);line-height:1}
+  .stat .l{font-size:12px;color:var(--grey);margin-top:5px}
+  nav.toc{background:var(--bg-dim);border:1px solid var(--bg4);border-radius:10px;padding:14px 18px;margin:26px 0 0}
+  nav.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:26px}
+  nav.toc li{margin:3px 0;break-inside:avoid}
+  nav.toc a{color:var(--fg)} nav.toc a:hover{color:var(--blue)}
+  .axis-list{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-wrap:wrap;gap:8px}
+  .axis-list li{background:var(--bg-blue);border:1px solid var(--blue);border-radius:999px;padding:4px 12px;font-size:13px;color:#cfe9e6}
+  article.idea{background:var(--bg1);border:1px solid var(--bg4);border-radius:14px;padding:20px 22px;margin:16px 0;scroll-margin-top:20px}
+  article.idea .num{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;border-radius:8px;
+    background:var(--bg-green);color:var(--green);border:1px solid var(--green);font-weight:700;font-size:14px;margin-right:10px;vertical-align:middle}
+  article.idea h3{display:inline;font-size:18px}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 14px}
+  .tag{font-size:11.5px;border-radius:6px;padding:2px 9px;border:1px solid var(--bg4);background:var(--bg2);color:var(--grey2)}
+  .tag.axis{background:var(--bg-blue);border-color:var(--blue);color:#cfe9e6}
+  .tag.conf{background:var(--bg-green);border-color:var(--green);color:#d7ecc0}
+  .tag.cx-low{background:var(--bg-green);border-color:var(--green);color:#d7ecc0}
+  .tag.cx-med{background:var(--bg-yellow);border-color:var(--yellow);color:#f0e2bd}
+  .tag.cx-high{background:var(--bg-red);border-color:var(--red);color:#f3c9c9}
+  dl.fields{margin:0}
+  dl.fields dt{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--grey);margin:14px 0 4px}
+  dl.fields dd{margin:0;max-width:var(--prose)}
+  dd.basis{background:var(--bg-dim);border:1px solid var(--bg4);border-radius:8px;padding:10px 13px;font-size:14px}
+  dd.basis .k{font-weight:700;color:var(--yellow)}
+  figure{margin:16px 0;background:var(--bg-dim);border:1px solid var(--bg4);border-radius:10px;padding:12px}
+  figure svg{display:block;width:100%;height:auto}
+  figcaption{font-size:12px;color:var(--grey);margin-top:8px}
+  .jump{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 4px}
+  .jump a{font-size:13px;background:var(--bg1);border:1px solid var(--bg4);border-radius:8px;padding:4px 10px;color:var(--fg)}
+  .jump a:hover{border-color:var(--blue);color:var(--blue);text-decoration:none}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--bg4);vertical-align:top}
+  th{color:var(--grey);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase}
+  td.rid{color:var(--grey);width:38px;font-variant-numeric:tabular-nums}
+  footer.composition-signal{margin-top:52px;padding-top:16px;border-top:1px solid var(--bg4);font-size:12.5px;color:var(--grey)}
+  strong{color:inherit}
+  .callout{background:var(--bg-dim);border:1px solid var(--bg4);border-radius:10px;padding:12px 15px;font-size:14px;max-width:var(--prose)}
+  @media (max-width:640px){ nav.toc ol{columns:1} .wrap{padding:26px 15px 60px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <p class="eyebrow">Ideation · ce-ideate (rev 2)</p>
+  <h1>A session database: hybrid search + a knowledge graph</h1>
+  <p class="meta">
+    <span class="pill">date <b>2026-10-09</b></span>
+    <span class="pill">topic <b>session-graph-and-hybrid-search</b></span>
+    <span class="pill">mode <b>repo-grounded</b></span>
+    <span class="pill">focus <b>one SQLite for text+vector hybrid search plus a session graph</b></span>
+  </p>
+  <div class="stats">
+    <div class="stat"><div class="n">40</div><div class="l">raw candidates</div></div>
+    <div class="stat"><div class="n">11</div><div class="l">after dedupe</div></div>
+    <div class="stat"><div class="n">7</div><div class="l">survivors</div></div>
+    <div class="stat"><div class="n">5</div><div class="l">topic axes</div></div>
+    <div class="stat"><div class="n">6</div><div class="l">frames run</div></div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Table of contents">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#grounding">Grounding Context</a></li>
+    <li><a href="#axes">Topic Axes</a></li>
+    <li><a href="#ideas">Ranked Ideas</a></li>
+    <li><a href="#rejections">Rejection Summary</a></li>
+  </ol>
+</nav>
+
+<section id="grounding">
+  <h2>Grounding Context</h2>
+  <p><strong>Codebase context.</strong> <code>claude-JSONL-browser</code> is a fully client-side Next.js 15 app that preprocesses a Claude Code session into a static index (<code>manifest.json</code>, <code>search.json</code>, <code>turns/&lt;n&gt;.json</code>, <code>agents/&lt;id&gt;.json</code>) served from <code>public/sessions/</code> with no API routes. The reference session is <strong>290 turns, 20,209 items, 3,206 tool calls, 1,903 subagents</strong>; <code>search.json</code> is 9.97&nbsp;MB / 21,432 docs and the 114&nbsp;MB of subagent bodies never enter search beyond a ≤2000-char summary. Search is a client-side <code>includes</code> scan capped at 300 in document order.</p>
+  <p><strong>What a graph can be built from today.</strong> Nodes: session, turn, item (9 kinds), agent, tool, tool-call↔result pair, PR, file, background task. Edges already derivable: agent→parent (<code>AgentLink.parentId</code>), item→<code>agentId</code>, <code>tool_use</code>↔<code>tool_result</code> by <code>tool_use_id</code>, turn→item, session→agent/PR, catalog→session. <strong>Gaps:</strong> file paths live only in result-side <code>toolUseResult.filePath</code> (input <code>file_path</code> is stored but never keyed), <code>structuredPatch</code> bodies are dropped to a line count, the <code>uuid</code>/<code>parentUuid</code> message DAG is never read, <code>SendMessage</code> is unrecognized, and the catalog has no shared key for cross-session joins.</p>
+  <p><strong>External context.</strong> The store question has a proven answer: <strong>FTS5 + <code>sqlite-vec</code> + graph tables coexist in one SQLite file</strong>, sharing <code>rowid</code> and fusing lexical and vector hits with RRF in a single CTE. <code>sqlite-vec</code> is brute-force (~250k vectors under 100&nbsp;ms; 1M fails; default KNN <code>k</code> cap 4096). Graph-in-SQLite is <code>nodes</code>+<code>edges</code> plus <code>WITH RECURSIVE</code> (~100K–1M node ceiling). Dedicated embedded graph engines are a trap — <strong>Kùzu was archived in Oct 2025 and acquired by Apple</strong>; Oxigraph is a RocksDB directory with SPARQL and no vectors; Neo4j embedded is JVM-only; Memgraph is a daemon. Agent-trace graph prior art is active: <em>AgentGraph</em> (AAAI 2026, SQLite-backed, PROV-O-like), <em>GRADE</em> (execution vs dependency edges, each graded observed/declared/inferred), <em>AgentTrails</em> (a joined quotient graph that aligns multiple traces for cross-session and duplicate-work detection), and <em>Graphiti/Zep</em> (bi-temporal episodes→entities→community). Closest shipping competitors already run this stack: <code>kmizzi/claude-code-sessions</code> (Next.js + better-sqlite3 + FTS5 + sqlite-vec, no graph), <code>cc-search</code>, and <code>knowledge-graph-rag-mcp</code> (EmbeddingGemma + sqlite-vec + BFS). Cross-domain vocabulary worth borrowing: W3C PROV-O, data lineage, the Git commit DAG, and SBOM PageRank.</p>
+</section>
+
+<section id="axes">
+  <h2>Topic Axes</h2>
+  <ul class="axis-list">
+    <li>1 · One-file schema &amp; storage</li>
+    <li>2 · Session graph model</li>
+    <li>3 · Graph &amp; edge extraction at ingest</li>
+    <li>4 · Graph + hybrid retrieval</li>
+    <li>5 · Query &amp; UX in the viewer</li>
+  </ul>
+</section>
+
+<section id="ideas">
+  <h2>Ranked Ideas</h2>
+  <div class="jump">
+    <a href="#idea-1">1 · One SQLite, one rowid</a>
+    <a href="#idea-2">2 · Content-addressed ingest</a>
+    <a href="#idea-3">3 · Rebuild the execution DAG</a>
+    <a href="#idea-4">4 · Cross-session graph</a>
+    <a href="#idea-5">5 · Tool→file lineage</a>
+    <a href="#idea-6">6 · Graph-expanded hybrid retrieval</a>
+    <a href="#idea-7">7 · Graph as navigation</a>
+  </div>
+
+  <article class="idea" id="idea-1">
+    <h3><span class="num">1</span>One SQLite, one identity: full text, FTS5, vectors, and graph share a single rowid</h3>
+    <div class="tags"><span class="tag axis">One-file schema &amp; storage</span><span class="tag conf">Confidence 92%</span><span class="tag cx-high">Complexity High</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Make one SQLite file the source of truth. Every item, agent, turn, file, and session gets a single INTEGER primary key; the FTS5 table, the <code>sqlite-vec</code> <code>vec0</code> table, and the graph's <code>nodes</code>/<code>edges</code> tables all reference that same rowid, so hybrid retrieval is <code>JOIN … USING(rowid)</code> with RRF computed in one CTE. Store the full untruncated text (including the 114&nbsp;MB of subagent bodies) and treat today's <code>search.json</code>/<code>manifest.json</code> as render-time exports. The graph is canonical; text and vectors are projections over it, with bi-temporal validity (<code>t_valid</code>/<code>t_invalid</code>) so "as of turn N" is a <code>WHERE</code> clause.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>lib/jsonl/session-index.ts:314</code> <code>truncate</code> is <code>return value.slice(0, limit)</code> and <code>:660</code> <code>searchLimit ?? 2000</code>, so search can never match text that was sliced away; ids are two disjoint string keys, <code>t&lt;turn&gt;:&lt;item&gt;</code> (<code>:654</code>) and <code>a:&lt;agentId&gt;</code> (<code>:992</code>); <code>scripts/build-session-index.ts:201</code> writes one flat <code>search.json</code>. <span class="k">external:</span> FTS5 + <code>sqlite-vec</code> sharing <code>rowid</code> with RRF in one CTE is a documented, author-confirmed pattern; Graphiti/Zep's bi-temporal model.</dd>
+      <dt>Rationale</dt>
+      <dd>Three parallel key spaces and three stores is exactly how hybrid search drifts out of sync, and the current front-slice means the feature cannot retrieve what it threw away at build time. One rowid makes vector, keyword, and graph results trivially joinable and removes a whole class of "which id did this doc have" bugs — it is the foundation every other idea compounds on.</dd>
+      <dt>Downsides</dt>
+      <dd>SQLite becomes a required runtime dependency, which conflicts with the repo's "no API routes / no server" identity (see idea 6 and the noted alternatives); full untruncated text + vectors push the artifact toward ~100&nbsp;MB per session; browser access needs WASM SQLite or a local sidecar; <code>sqlite-vec</code>'s brute-force ceiling bounds multi-session scale.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 150" role="img" aria-label="One SQLite file where the FTS5 table, the vector table, and the graph node table all share one rowid, joined in a single CTE.">
+        <rect x="20" y="18" width="320" height="118" rx="10" fill="#343f44" stroke="#4f585e"/>
+        <text x="180" y="38" fill="#d3c6aa" font-size="13" text-anchor="middle" font-weight="600">session.db (one file)</text>
+        <rect x="40" y="50" width="120" height="30" rx="5" fill="#3a515d" stroke="#7fbbb3"/>
+        <text x="100" y="69" fill="#cfe9e6" font-size="12" text-anchor="middle">FTS5 text</text>
+        <rect x="180" y="50" width="140" height="30" rx="5" fill="#543a48" stroke="#d699b6"/>
+        <text x="250" y="69" fill="#f0d3e2" font-size="12" text-anchor="middle">vec0 vectors</text>
+        <rect x="40" y="92" width="280" height="30" rx="5" fill="#425047" stroke="#a7c080"/>
+        <text x="180" y="111" fill="#d7ecc0" font-size="12" text-anchor="middle">nodes / edges (graph)</text>
+        <text x="180" y="141" fill="#9da9a0" font-size="11.5" text-anchor="middle">all keyed by the same rowid</text>
+        <line x1="340" y1="80" x2="430" y2="80" stroke="#7fbbb3" stroke-dasharray="4 3"/>
+        <rect x="430" y="52" width="270" height="56" rx="8" fill="#4d4c43" stroke="#dbbc7f"/>
+        <text x="565" y="74" fill="#f0e2bd" font-size="12.5" text-anchor="middle">one CTE:</text>
+        <text x="565" y="93" fill="#f0e2bd" font-size="11.5" text-anchor="middle">JOIN … USING(rowid) → RRF → graph walk</text>
+      </svg>
+      <figcaption>One key joins keyword, vector, and graph.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-2">
+    <h3><span class="num">2</span>Content-addressed incremental ingest with snapshots</h3>
+    <div class="tags"><span class="tag axis">One-file schema &amp; storage</span><span class="tag conf">Confidence 90%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Key every node by a content hash and upsert into SQLite instead of deleting the output directory. A <code>snapshot</code> row per <code>npm run index</code> run, plus manifest rows enumerating which turn/agent/doc rows belong to it, gives metadata-only supersede and "as of any build" queries; re-indexing a growing session writes only new turns and re-embeds only changed items. Replace the wall-clock <code>builtAt</code> with a content hash so the viewer can tell what is actually stale.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>scripts/build-session-index.ts:142</code> <code>if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true })</code> — a full teardown every run; <code>:61</code> <code>readJsonl</code> loads and parses whole files; <code>lib/jsonl/session-index.ts:878</code> stamps wall-clock <code>builtAt</code>. <span class="k">external:</span> Git's content-addressed object store, Bazel red-green incremental builds, and the Iceberg/Delta snapshot + manifest model for metadata-only operations.</dd>
+      <dt>Rationale</dt>
+      <dd>Re-embedding 21k docs plus 1,903 agent bodies per run is the dominant cost and forces a full reload; content-addressed upsert turns minutes into seconds and is the precondition for both a live-append watcher and multi-session scale-out. Iteration speed on the corpus is the compounding asset here.</dd>
+      <dt>Downsides</dt>
+      <dd>A persistent, gitignored cache/database to manage and invalidate; correctness depends on hashing the exact embedded text (normalization and truncation included) so a silent model change does not reuse stale vectors; snapshot bookkeeping adds schema surface.</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="idea-3">
+    <h3><span class="num">3</span>Rebuild the true execution DAG — and repair compaction</h3>
+    <div class="tags"><span class="tag axis">Session graph model</span><span class="tag conf">Confidence 88%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Preserve the raw <code>uuid</code>/<code>parentUuid</code> message chain and <code>SendMessage</code> as first-class edges, so the subagent structure becomes a real execution DAG with fan-in and fan-out instead of a tree. Grade each edge <strong>observed / declared / inferred</strong> so retrieval can weight them and the viewer can show "this agent's result fed four others". Because compaction drops the pre-compaction region — leaving orphaned tool results as standalone items — build the graph from the uuid chain first (the true message tree), then linearize for display, so compaction gaps and rewinds become edges instead of losses.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>rg parentUuid</code> returns nothing repo-wide — <code>session-index.ts</code> reads neither <code>uuid</code> nor <code>parentUuid</code>; <code>MAIN_AGENT_TOOLS = new Set(['Agent','Task'])</code> (<code>:213</code>) misses <code>SendMessage</code>; orphaned tool results are handled at <code>:491</code>; <code>backgroundTaskId</code>/<code>taskId</code> are kept only as scalars (<code>:355</code>). <span class="k">external:</span> PROV-O's <code>wasInformedBy</code>, the Git commit DAG, and GRADE's graded execution/dependency edges.</dd>
+      <dt>Rationale</dt>
+      <dd>The tree lies about async and background work, and compaction silently rewrites history — the two most disorienting failures in long agentic sessions. A graded DAG reveals cross-agent dependencies the viewer cannot show today, restores turn ancestry across compaction, and gives ranking a principled confidence signal.</dd>
+      <dt>Downsides</dt>
+      <dd>Requires reading raw records the pipeline currently ignores (more parser surface and memory during ingest); inferred edges can be wrong and must be labelled as such; a DAG complicates the linear "turn list" the viewer is built around.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 150" role="img" aria-label="A linear turn list loses branching, compaction, and agent-to-agent messages; the reconstructed DAG keeps them as edges.">
+        <text x="10" y="18" fill="#9da9a0" font-size="12" font-weight="600">today · linearized</text>
+        <rect x="10" y="28" width="44" height="22" rx="4" fill="#343f44" stroke="#4f585e"/><text x="32" y="43" fill="#d3c6aa" font-size="10.5" text-anchor="middle">t1</text>
+        <rect x="60" y="28" width="44" height="22" rx="4" fill="#343f44" stroke="#4f585e"/><text x="82" y="43" fill="#d3c6aa" font-size="10.5" text-anchor="middle">t2</text>
+        <rect x="110" y="28" width="44" height="22" rx="4" fill="#514045" stroke="#e67e80"/><text x="132" y="43" fill="#f3c9c9" font-size="10.5" text-anchor="middle">t3</text>
+        <rect x="160" y="28" width="44" height="22" rx="4" fill="#343f44" stroke="#4f585e"/><text x="182" y="43" fill="#d3c6aa" font-size="10.5" text-anchor="middle">t4</text>
+        <text x="10" y="74" fill="#9da9a0" font-size="12" font-weight="600">reconstructed · DAG</text>
+        <circle cx="30" cy="100" r="14" fill="#425047" stroke="#a7c080"/><text x="30" y="104" fill="#d7ecc0" font-size="10.5" text-anchor="middle">t1</text>
+        <circle cx="110" cy="86" r="14" fill="#425047" stroke="#a7c080"/><text x="110" y="90" fill="#d7ecc0" font-size="10.5" text-anchor="middle">t2</text>
+        <circle cx="110" cy="128" r="14" fill="#514045" stroke="#e67e80"/><text x="110" y="132" fill="#f3c9c9" font-size="10.5" text-anchor="middle">t3</text>
+        <circle cx="200" cy="100" r="14" fill="#425047" stroke="#a7c080"/><text x="200" y="104" fill="#d7ecc0" font-size="10.5" text-anchor="middle">t4</text>
+        <line x1="44" y1="98" x2="96" y2="88" stroke="#7fbbb3"/><line x1="44" y1="102" x2="96" y2="126" stroke="#7fbbb3"/>
+        <line x1="124" y1="88" x2="186" y2="98" stroke="#7fbbb3"/><line x1="124" y1="126" x2="186" y2="102" stroke="#7fbbb3" stroke-dasharray="4 3"/>
+        <text x="300" y="96" fill="#9da9a0" font-size="11.5">solid = observed · dashed = inferred</text>
+        <text x="300" y="114" fill="#9da9a0" font-size="11.5">t3 = a branch compaction hid</text>
+      </svg>
+      <figcaption>From a line that lost its branches to the tree it really was.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-4">
+    <h3><span class="num">4</span>Cross-session graph on shared keys — sessions become subgraphs</h3>
+    <div class="tags"><span class="tag axis">Session graph model</span><span class="tag conf">Confidence 85%</span><span class="tag cx-high">Complexity High</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Promote file paths (parsed from tool inputs, not just <code>toolUseResult.filePath</code>), tool names, PR numbers, <code>gitBranch</code>, <code>cwd</code>, and content hashes to canonical nodes shared across sessions, then build one union graph in which a session is a subgraph. Type the cross-session edges by temporal direction — <code>affirms</code>, <code>supersedes</code>, <code>distinguishes</code> — so browsing old work reveals what is still good ("superseded by session B, turn 42"). Borrow FRBR-style authority records so one file is a single entity linked from every session that touched it.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> the catalog (<code>lib/jsonl/session-index.ts:169–178</code>) stores only id/title/counts/models/timestamps — no shared identifier — and <code>ensureSearch</code> loads a single session (<code>SessionIndexViewer.tsx:123–132</code>). <span class="k">external:</span> AgentTrails' joined quotient graph aligns traces across executions for cross-session and duplicate-work detection; FRBR authority control and legal citators (Shepard's/KeyCite) for typed supersession.</dd>
+      <dt>Rationale</dt>
+      <dd>The user's explicit goal is edges between sessions, and the highest-value question — "have I done this before?" — is structurally unanswerable when the session is the root node and there is no shared key. Once keyed, "same file in 7 sessions", "same PR", and "recurring error" become plain joins, and value grows with the corpus rather than per session.</dd>
+      <dt>Downsides</dt>
+      <dd>A much larger corpus across many sessions pushes past brute-force comfort and re-raises the ANN question; entity resolution (is this the same file/branch?) needs normalization rules; stale sessions need re-indexing discipline; the citator semantics add modeling complexity.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 150" role="img" aria-label="Sessions are subgraphs that connect through shared file, branch, and PR nodes.">
+        <circle cx="120" cy="70" r="46" fill="none" stroke="#7fbbb3"/><text x="120" y="24" fill="#cfe9e6" font-size="12" text-anchor="middle">session A</text>
+        <circle cx="300" cy="46" r="30" fill="#425047" stroke="#a7c080"/><text x="300" y="50" fill="#d7ecc0" font-size="11" text-anchor="middle">file X</text>
+        <circle cx="420" cy="96" r="30" fill="#543a48" stroke="#d699b6"/><text x="420" y="100" fill="#f0d3e2" font-size="11" text-anchor="middle">PR 81</text>
+        <circle cx="560" cy="60" r="46" fill="none" stroke="#7fbbb3"/><text x="560" y="14" fill="#cfe9e6" font-size="12" text-anchor="middle">session B</text>
+        <line x1="166" y1="62" x2="272" y2="50" stroke="#4f585e"/>
+        <line x1="164" y1="80" x2="392" y2="94" stroke="#4f585e"/>
+        <line x1="514" y1="56" x2="448" y2="90" stroke="#4f585e"/>
+        <line x1="330" y1="46" x2="516" y2="58" stroke="#4f585e"/>
+        <text x="300" y="140" fill="#9da9a0" font-size="11.5" text-anchor="middle">shared file / PR / branch nodes connect otherwise-separate sessions</text>
+      </svg>
+      <figcaption>Shared keys turn a picker into a corpus.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-5">
+    <h3><span class="num">5</span>Tool→file change lineage from inputs and patch hunks</h3>
+    <div class="tags"><span class="tag axis">Graph &amp; edge extraction at ingest</span><span class="tag conf">Confidence 88%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Parse <code>file_path</code> out of Read/Edit/Write inputs (stored verbatim but never keyed) and retain the <code>structuredPatch</code> hunks that are currently collapsed to a line count, emitting typed <code>tool→file</code> edges tagged by operation (read / edit / write) plus file co-change edges. The result is PROV-O-style change lineage: which agent changed line X of a file, in which turn, verified by which test run — and, chained, Read→Edit sequences and "files this session owns".</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> only result-side <code>toolUseResult.filePath</code> is kept (<code>lib/jsonl/session-index.ts:344</code>); <code>structuredPatch</code> becomes <code>meta.patchLines = tur.structuredPatch.length</code> (<code>:371</code>); <code>input.file_path</code> is stored raw (<code>:418</code>) but never keyed. <span class="k">external:</span> data-lineage / PROV-O graphs, compiler SSA def-use chains (tool_use↔tool_result is already a def-use pairing at <code>:456</code>), and SBOM co-change graphs.</dd>
+      <dt>Rationale</dt>
+      <dd>File identity is the join key connecting tools, agents, and sessions — the highest-yield missing edge in the current model. Without it the graph is only agent→parent and cannot support impact analysis or cross-session retrieval, and it costs nothing extra because the data is already in memory during the build.</dd>
+      <dt>Downsides</dt>
+      <dd>Tool input shapes vary (MCP tools, Bash heredocs, notebooks), so path extraction needs a per-tool strategy and will be incomplete; retaining patch bodies grows the database; "same file" comparisons need path normalization (absolute vs repo-relative, worktrees).</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="idea-6">
+    <h3><span class="num">6</span>Graph-expanded hybrid retrieval — FTS5 + vectors + graph in one ranked pass</h3>
+    <div class="tags"><span class="tag axis">Graph + hybrid retrieval</span><span class="tag conf">Confidence 90%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Replace the linear <code>includes</code> scan (capped 300, document order) with a two-stage query: FTS5 and <code>sqlite-vec</code> candidates fused by RRF, then one-hop expansion along the graph (tool_use↔result, agent→parent subtree, file co-change) with a Personalized-PageRank rerank seeded from the matched nodes. Because text, vectors, and graph share rowid, each future signal is a new leg in the same CTE. Optionally materialize the neighbor lists and centrality at ingest so the browser renders neighbors instantly from a static file, with no query-time traversal.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> the entire retriever is the loop at <code>components/jsonl/SessionIndexViewer.tsx:208–220</code> — a linear <code>includes</code> that <code>break</code>s at 300, with no ranking. <span class="k">external:</span> single-CTE RRF over FTS5 + <code>sqlite-vec</code>; Personalized PageRank (Haveliwala 2002) and SBOM-style PageRank; GraphRAG local/global hybrid retrieval; transitive-closure materialization for low-latency client lookup.</dd>
+      <dt>Rationale</dt>
+      <dd>Substring order buries the best hit behind the 300th and returns no context. Graph-expanded hybrid retrieval surfaces the causally-relevant turn even when the query words never appear in it, and returns the story around a hit — its tool result, sibling agents, touched files — so the graph investment pays off at query time rather than only at ingest.</dd>
+      <dt>Downsides</dt>
+      <dd>Two-plus retrieval legs and a fusion/rerank scheme to tune and explain; RRF discards score magnitude so thresholding needs a fused-score design; graph expansion can amplify a bad seed (needs a relevance floor); precomputed closure adds build cost and artifact size.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 160" role="img" aria-label="A query fans into FTS5, vector, and graph legs fused by RRF and reranked by Personalized PageRank into a ranked result set.">
+        <rect x="8" y="62" width="110" height="38" rx="8" fill="#343f44" stroke="#4f585e"/>
+        <text x="63" y="86" fill="#d3c6aa" font-size="12.5" text-anchor="middle">query</text>
+        <line x1="118" y1="72" x2="210" y2="34" stroke="#4f585e"/>
+        <line x1="118" y1="81" x2="210" y2="81" stroke="#4f585e"/>
+        <line x1="118" y1="90" x2="210" y2="128" stroke="#4f585e"/>
+        <rect x="210" y="16" width="180" height="36" rx="7" fill="#3a515d" stroke="#7fbbb3"/>
+        <text x="300" y="39" fill="#cfe9e6" font-size="12" text-anchor="middle">FTS5 (lexical)</text>
+        <rect x="210" y="63" width="180" height="36" rx="7" fill="#543a48" stroke="#d699b6"/>
+        <text x="300" y="86" fill="#f0d3e2" font-size="12" text-anchor="middle">vec0 (semantic)</text>
+        <rect x="210" y="110" width="180" height="36" rx="7" fill="#425047" stroke="#a7c080"/>
+        <text x="300" y="133" fill="#d7ecc0" font-size="12" text-anchor="middle">graph neighbors</text>
+        <line x1="390" y1="34" x2="470" y2="76" stroke="#4f585e"/>
+        <line x1="390" y1="81" x2="470" y2="81" stroke="#4f585e"/>
+        <line x1="390" y1="128" x2="470" y2="86" stroke="#4f585e"/>
+        <rect x="470" y="58" width="90" height="46" rx="8" fill="#4d4c43" stroke="#dbbc7f"/>
+        <text x="515" y="78" fill="#f0e2bd" font-size="12" text-anchor="middle">RRF</text>
+        <text x="515" y="93" fill="#9da9a0" font-size="10.5" text-anchor="middle">+ PPR rerank</text>
+        <rect x="566" y="56" width="146" height="50" rx="8" fill="#425047" stroke="#a7c080"/>
+        <text x="639" y="76" fill="#d7ecc0" font-size="12" text-anchor="middle">ranked hits</text>
+        <text x="639" y="92" fill="#d7ecc0" font-size="11" text-anchor="middle">+ neighborhood</text>
+      </svg>
+      <figcaption>Three legs, one ranked, contextual result.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-7">
+    <h3><span class="num">7</span>Graph as navigation: provenance on every block, a neighborhood lens, and a duplicate-work rail</h3>
+    <div class="tags"><span class="tag axis">Query &amp; UX in the viewer</span><span class="tag conf">Confidence 82%</span><span class="tag cx-high">Complexity High</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Today only search results carry links into the session; every other block is a dead end. Invert the arrow: every rendered block (tool call, agent, attachment) exposes outbound provenance — its matched result pair, the file it touched, sibling agents on the same file, and other sessions touching that file — and a persistent neighborhood panel updates as you navigate, so text/vector search becomes one affordance inside a live graph lens rather than the only entry point. Surface a duplicate-work rail built from an AgentTrails-style quotient graph, and let the lens rank "hot spots" by graph centrality.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>jumpToResult</code> maps a doc to a turn/agent view only (<code>SessionIndexViewer.tsx:235–245</code>) and <code>SessionBlocks</code> renders blocks with no outbound edges; <code>SessionItem.isError</code> (<code>session-index.ts:47</code>), compaction items (<code>:621</code>), and <code>AgentHeader.status</code> (<code>:89</code>) are available to mark anomalies. <span class="k">external:</span> AgentTrails' quotient graph for duplicate-work detection; Graphiti/Zep community summaries as a navigation concept.</dd>
+      <dt>Rationale</dt>
+      <dd>Exploration is how you actually debug a long agent session, and the current UI forces you to leave what you are reading and guess a keyword. Making the graph the navigation surface removes the "I must know the word" tax, exposes cross-session and file relations the flat list cannot show, and turns every new edge type into a navigable affordance for free.</dd>
+      <dt>Downsides</dt>
+      <dd>A graph explorer is a large UI build on top of an already-dense viewer; neighborhood panels can overwhelm and need curation; duplicate-work detection produces false positives that erode trust; ranking by centrality can surface noise if the graph is sparse.</dd>
+    </dl>
+  </article>
+</section>
+
+<section id="rejections">
+  <h2>Rejection Summary</h2>
+  <table>
+    <thead><tr><th class="rid">#</th><th>Idea</th><th>Reason rejected</th></tr></thead>
+    <tbody>
+      <tr><td class="rid">—</td><td>Graph-as-truth with bi-temporal validity as a separate direction</td><td>merged into idea 1 (it is the same schema decision)</td></tr>
+      <tr><td class="rid">—</td><td>Duplicate-work detection via joined quotient graph</td><td>merged into ideas 6 (ranking dedup) and 7 (duplicate-work rail)</td></tr>
+      <tr><td class="rid">—</td><td>Flight-data-recorder "exceedance" playback framing</td><td>basis refuted — the FDR/FOQA analogy does not hold; the provenance/neighborhood core was kept in idea 7</td></tr>
+      <tr><td class="rid">—</td><td>Cross-session hybrid search pane</td><td>redundant with idea 4 (same capability, restated as a UI pane) and its external basis was mismatched</td></tr>
+      <tr><td class="rid">—</td><td>Index the 114 MB subagent bodies at item granularity</td><td>merged into idea 1 (full-text ingest subsumes the coverage fix)</td></tr>
+      <tr><td class="rid">—</td><td>Behavioral-shape retrieval (embed the trajectory/fingerprint)</td><td>novel but lower-confidence; folded into idea 6 as an optional ranking signal rather than a standalone direction</td></tr>
+      <tr><td class="rid">—</td><td>Kùzu / dedicated embedded graph engine</td><td>rejected at grounding — archived Oct 2025 and acquired by Apple; high churn risk versus SQLite-as-graph</td></tr>
+    </tbody>
+  </table>
+  <p class="callout">All five axes are covered by the survivor set — no deliberate coverage gaps.</p>
+</section>
+
+<footer class="composition-signal">
+  Composed 2026-10-09 by <code>ce-ideate</code> (rev 2) from the user direction "generate embeddings and ingest full text into a database (likely SQLite) for hybrid search, and build a graph database of the session capturing edges between sessions, tool calls, etc." Grounded in <code>claude-JSONL-browser</code>. Supersedes the rev-1 artifact <code>docs/ideation/2026-10-09-embeddings-session-search-ideation.html</code>.
+</footer>
+
+</div>
+</body>
+</html>

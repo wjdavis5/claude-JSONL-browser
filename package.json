@@ -3,12 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "description": "JSONL to Markdown converter with Everforest theme",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "index": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-session-index.ts"
   },
   "dependencies": {
     "@vercel/analytics": "^1.5.0",
@@ -17,6 +21,7 @@
     "next": "15.1.11",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sqlite-vec": "^0.1.7",
     "tailwind-merge": "^2.5.5"
   },
   "devDependencies": {

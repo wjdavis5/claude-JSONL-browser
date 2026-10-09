@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: Embedding-based search for Claude sessions</title>
+<style>
+  :root{
+    --bg:#2d353b; --bg-dim:#232a2e; --bg1:#343f44; --bg2:#3d484d; --bg3:#475258; --bg4:#4f585e;
+    --fg:#d3c6aa; --grey:#859289; --grey2:#9da9a0;
+    --green:#a7c080; --blue:#7fbbb3; --aqua:#83c092; --yellow:#dbbc7f; --purple:#d699b6; --red:#e67e80; --orange:#e69875;
+    --bg-green:#425047; --bg-blue:#3a515d; --bg-yellow:#4d4c43; --bg-purple:#543a48; --bg-red:#514045;
+    --maxw:980px; --prose:70ch;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--blue);text-decoration:none} a:hover{text-decoration:underline}
+  code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:.86em}
+  code{background:var(--bg1);border:1px solid var(--bg4);border-radius:4px;padding:.08em .35em;color:var(--aqua)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:40px 22px 80px}
+  header.doc{border-bottom:1px solid var(--bg4);padding-bottom:22px;margin-bottom:8px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--grey);margin:0 0 8px}
+  h1{font-size:clamp(24px,3.4vw,34px);line-height:1.2;margin:0 0 14px;font-weight:700;letter-spacing:-.01em}
+  h2{font-size:20px;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--bg4);font-weight:650}
+  h3{font-size:16.5px;margin:0 0 4px;font-weight:650}
+  p{margin:0 0 12px;max-width:var(--prose)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0}
+  .meta .pill{font-size:12.5px;background:var(--bg1);border:1px solid var(--bg4);border-radius:999px;padding:3px 11px;color:var(--grey2)}
+  .meta .pill b{color:var(--fg);font-weight:600}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:22px 0 6px}
+  .stat{background:var(--bg1);border:1px solid var(--bg4);border-radius:10px;padding:12px 14px}
+  .stat .n{font-size:24px;font-weight:700;color:var(--green);line-height:1}
+  .stat .l{font-size:12px;color:var(--grey);margin-top:5px}
+  nav.toc{background:var(--bg-dim);border:1px solid var(--bg4);border-radius:10px;padding:14px 18px;margin:26px 0 0}
+  nav.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:26px}
+  nav.toc li{margin:3px 0;break-inside:avoid}
+  nav.toc a{color:var(--fg)} nav.toc a:hover{color:var(--blue)}
+  section{margin-top:8px}
+  .axis-list{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-wrap:wrap;gap:8px}
+  .axis-list li{background:var(--bg-blue);border:1px solid var(--blue);border-radius:999px;padding:4px 12px;font-size:13px;color:#cfe9e6}
+  article.idea{background:var(--bg1);border:1px solid var(--bg4);border-radius:14px;padding:20px 22px;margin:16px 0;scroll-margin-top:20px}
+  article.idea .num{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;border-radius:8px;
+    background:var(--bg-green);color:var(--green);border:1px solid var(--green);font-weight:700;font-size:14px;margin-right:10px;vertical-align:middle}
+  article.idea h3{display:inline;font-size:18px}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 14px}
+  .tag{font-size:11.5px;border-radius:6px;padding:2px 9px;border:1px solid var(--bg4);background:var(--bg2);color:var(--grey2)}
+  .tag.axis{background:var(--bg-blue);border-color:var(--blue);color:#cfe9e6}
+  .tag.conf{background:var(--bg-green);border-color:var(--green);color:#d7ecc0}
+  .tag.cx-low{background:var(--bg-green);border-color:var(--green);color:#d7ecc0}
+  .tag.cx-med{background:var(--bg-yellow);border-color:var(--yellow);color:#f0e2bd}
+  .tag.cx-high{background:var(--bg-red);border-color:var(--red);color:#f3c9c9}
+  dl.fields{margin:0}
+  dl.fields dt{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--grey);margin:14px 0 4px}
+  dl.fields dd{margin:0;max-width:var(--prose)}
+  dd.basis{background:var(--bg-dim);border:1px solid var(--bg4);border-radius:8px;padding:10px 13px;font-size:14px}
+  dd.basis .k{font-weight:700;color:var(--yellow)}
+  figure{margin:16px 0;background:var(--bg-dim);border:1px solid var(--bg4);border-radius:10px;padding:12px}
+  figure svg{display:block;width:100%;height:auto}
+  figcaption{font-size:12px;color:var(--grey);margin-top:8px}
+  .jump{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 4px}
+  .jump a{font-size:13px;background:var(--bg1);border:1px solid var(--bg4);border-radius:8px;padding:4px 10px;color:var(--fg)}
+  .jump a:hover{border-color:var(--blue);color:var(--blue);text-decoration:none}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--bg4);vertical-align:top}
+  th{color:var(--grey);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase}
+  td.rid{color:var(--grey);width:38px;font-variant-numeric:tabular-nums}
+  .grounding p{max-width:var(--prose)}
+  footer.composition-signal{margin-top:52px;padding-top:16px;border-top:1px solid var(--bg4);font-size:12.5px;color:var(--grey)}
+  strong{color:inherit}
+  .callout{background:var(--bg-dim);border:1px solid var(--bg4);border-radius:10px;padding:12px 15px;font-size:14px;max-width:var(--prose)}
+  @media (max-width:640px){ nav.toc ol{columns:1} .wrap{padding:26px 15px 60px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <p class="eyebrow">Ideation · ce-ideate</p>
+  <h1>Embedding-based search for entire Claude sessions</h1>
+  <p class="meta">
+    <span class="pill">date <b>2026-10-09</b></span>
+    <span class="pill">topic <b>embeddings-session-search</b></span>
+    <span class="pill">mode <b>repo-grounded</b></span>
+    <span class="pill">focus <b>semantic search over full sessions via local embeddings + a DB</b></span>
+  </p>
+  <div class="stats">
+    <div class="stat"><div class="n">40</div><div class="l">raw candidates</div></div>
+    <div class="stat"><div class="n">18</div><div class="l">after dedupe</div></div>
+    <div class="stat"><div class="n">7</div><div class="l">survivors</div></div>
+    <div class="stat"><div class="n">5</div><div class="l">topic axes</div></div>
+    <div class="stat"><div class="n">6</div><div class="l">frames run</div></div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Table of contents">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#grounding">Grounding Context</a></li>
+    <li><a href="#axes">Topic Axes</a></li>
+    <li><a href="#ideas">Ranked Ideas</a></li>
+    <li><a href="#rejections">Rejection Summary</a></li>
+  </ol>
+</nav>
+
+<section id="grounding" class="grounding">
+  <h2>Grounding Context</h2>
+  <p><strong>Codebase context.</strong> <code>claude-JSONL-browser</code> is a Next.js 15 / React 19 app that is currently fully client-side ("no data sent to servers", <code>README.md:77</code>). It preprocesses a Claude Code session into a sharded static index under <code>public/sessions/&lt;id&gt;/</code> — <code>manifest.json</code>, <code>search.json</code>, <code>turns/&lt;n&gt;.json</code>, <code>agents/&lt;id&gt;.json</code> — served by <code>fetch</code> from <code>BASE='/sessions'</code>, with no API routes. The reference session indexes to <strong>290 turns, 20,209 items, 3,206 tool calls, and 1,903 subagent transcripts</strong> (main ~70&nbsp;MB, subagents ~900&nbsp;MB raw). Search today is a client-side <code>String.includes</code> linear scan over the entire <code>search.json</code> (9.97&nbsp;MB / 21,432 docs), capped at 300 results in document order.</p>
+  <p>The embeddable unit today is a flat <code>SearchDoc</code> (<code>id</code>, <code>kind: 'turn'|'agent'</code>, <code>turn/item/agent</code>, <code>label</code>, <code>text</code>) with hard truncation: <code>searchLimit 2000</code>, thinking 1000, tool input and result 1000 each, agent doc = description + task + finalText. The <strong>114&nbsp;MB of subagent bodies</strong> are written to <code>agents/&lt;id&gt;.json</code> but never enter the search corpus beyond a ≤2000-char summary.</p>
+  <p><strong>External context.</strong> This niche is already crowded and converges hard: <em>Mneme</em> (LanceDB + nomic + FTS + cross-encoder rerank; explicitly skips tool/thinking noise), <em>SessionFlow</em> (EmbeddingGemma-300M + Milvus HNSW + SQLite FTS5 + RRF, with an incremental watcher), and <em>transcript-search-v2</em>/<em>lore</em>/<em>claude-chat-search</em> (a single SQLite file holding chunk rows + FTS5 + sqlite-vec in one transaction). The repeated lesson is <strong>hybrid-or-nothing</strong>: vector-only search is uniformly reported as disappointing. LM Studio's <code>/v1/embeddings</code> is OpenAI-compatible but has known sharp edges — concurrent requests hang (bug #7), <code>usage.prompt_tokens</code> is always 0 (#1546), it crashed under concurrency in v0.3.34, its normalization is undocumented, and its 2K context truncates silently. For a single-user app the only zero-ops stores with no separate process are <code>sqlite-vec</code> (single file, brute-force, KNN k=4096 cap ≈ 50–100K vectors) and LanceDB (native BM25+RRF, mmap beyond RAM). Cross-domain, observability systems teach index-everything vs label-only and time-sharding; email/legal eDiscovery teaches that the meaningful unit is the thread, not the message.</p>
+</section>
+
+<section id="axes">
+  <h2>Topic Axes</h2>
+  <ul class="axis-list">
+    <li>1 · Embedding unit &amp; chunking</li>
+    <li>2 · Vector store &amp; hybrid retrieval</li>
+    <li>3 · Ingest pipeline &amp; freshness</li>
+    <li>4 · Query &amp; UX in the viewer</li>
+    <li>5 · Architecture boundary &amp; deployment</li>
+  </ul>
+</section>
+
+<section id="ideas">
+  <h2>Ranked Ideas</h2>
+  <div class="jump">
+    <a href="#idea-1">1 · Index the discarded 114 MB</a>
+    <a href="#idea-2">2 · Chunk for meaning</a>
+    <a href="#idea-3">3 · Hybrid ranked retrieval</a>
+    <a href="#idea-4">4 · Static vectors + browser query encode</a>
+    <a href="#idea-5">5 · Content-addressed cache</a>
+    <a href="#idea-6">6 · Explainable, filterable results</a>
+    <a href="#idea-7">7 · Cross-session recall</a>
+  </div>
+
+  <article class="idea" id="idea-1">
+    <h3><span class="num">1</span>Index the 114 MB of subagent bodies you currently discard</h3>
+    <div class="tags"><span class="tag axis">Embedding unit &amp; chunking</span><span class="tag conf">Confidence 95%</span><span class="tag cx-high">Complexity High</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Each of the 1,903 subagents contributes exactly one searchable doc built from its description, a 240-char task, and a 240-char final answer — the entire middle of the subagent's work is invisible to search. Emit one embeddable doc per agent item (reusing the existing <code>SessionItem</code> stream and the <code>a:&lt;agentId&gt;</code> jump target) and interleave the main thread and every subagent into a single timestamp-ordered, hash-deduped stream, so "the session" is literally every event that ran.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>lib/jsonl/session-index.ts:991</code> builds the agent doc as <code>truncate([header.description, header.task, finalText]…)</code>, while <code>scripts/build-session-index.ts:167</code> writes the full body to <code>agents/&lt;id&gt;.json</code> and pushes only that summary into <code>search.json</code>. <span class="k">external:</span> chis.dev indexes two levels (session + turn); plaso/log2timeline merges many sources into one super-timeline.</dd>
+      <dt>Rationale</dt>
+      <dd>This is a coverage problem, not a latency problem — a 10&nbsp;MB substring scan is already instant. The single biggest reason "search entire sessions" fails today is that ~90% of the bytes, and almost all of the reasoning, never enter the index. Fixing the unit converts the feature from "search the main thread" into "search everything Claude did".</dd>
+      <dt>Downsides</dt>
+      <dd>Corpus grows ~10× (to ~100&nbsp;MB of chunk text), so embedding time, store size, and the search payload all rise; needs dedupe and per-kind filtering to avoid tool-noise drowning the signal; the existing per-session static-file model must be sized for it.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 150" role="img" aria-label="Today only the main thread and one-line subagent summaries are searchable; 114 MB of subagent bodies are unindexed.">
+        <text x="0" y="18" fill="#9da9a0" font-size="13" font-weight="600">Searchable corpus today</text>
+        <rect x="0" y="28" width="150" height="30" rx="5" fill="#425047" stroke="#a7c080"/>
+        <text x="75" y="47" fill="#d7ecc0" font-size="12" text-anchor="middle">main thread ~10 MB</text>
+        <rect x="158" y="28" width="120" height="30" rx="5" fill="#3a515d" stroke="#7fbbb3"/>
+        <text x="218" y="47" fill="#cfe9e6" font-size="12" text-anchor="middle">1,903 summaries</text>
+        <text x="0" y="96" fill="#9da9a0" font-size="13" font-weight="600">Unindexed</text>
+        <rect x="0" y="106" width="600" height="30" rx="5" fill="#514045" stroke="#e67e80"/>
+        <text x="300" y="125" fill="#f3c9c9" font-size="12" text-anchor="middle">subagent bodies — 114 MB of reasoning &amp; tool work (0% searchable)</text>
+      </svg>
+      <figcaption>Idea 1 moves the red band into the searchable corpus.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-2">
+    <h3><span class="num">2</span>Chunk for meaning: turn-pair, tool-pair, and agent-trajectory units</h3>
+    <div class="tags"><span class="tag axis">Embedding unit &amp; chunking</span><span class="tag conf">Confidence 88%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Stop embedding items in isolation. Embed each tool call as one request↔response unit (today the input and result are truncated separately and can evict each other), each prompt↔response as a turn pair, and each subagent as a whole trajectory with its turns as children. Retrieve on the child chunk but return the parent arc (small-to-big / parent-document retrieval), keeping the existing doc id as the jump target. Route by kind: embed prose (prompt, assistant text, thinking), keep tool identity and file paths as structured filters, and content-hash artifacts so identical attachments embed once.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>lib/jsonl/session-index.ts:604</code> emits one doc per item; <code>:314</code> <code>truncate</code> is <code>return value.slice(0, limit)</code> — a front slice with no overlap, so the tail of every long item is permanently unsearchable. <span class="k">external:</span> lore's turn-pair chunking, chis.dev's two-level docs, and parent-document / small-to-big retrieval are the standard remedies for fragment-level hits.</dd>
+      <dt>Rationale</dt>
+      <dd>A coding session's unit of meaning is the exchange or the task, not a 2,000-char slice. Item-level vectors return fragments the user must manually re-assemble by scrolling, and the current front-slice throws away the back half of exactly the long tool outputs and thinking blocks that carry the most signal.</dd>
+      <dt>Downsides</dt>
+      <dd>More chunking logic and a parent/child id scheme to maintain; overlap increases storage; "return the parent" changes what the results list shows, which ripples into the viewer's jump and highlight behavior.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 170" role="img" aria-label="A parent turn-pair chunk with child item chunks; a query matches a child and the viewer opens the parent arc.">
+        <rect x="20" y="20" width="300" height="34" rx="6" fill="#3a515d" stroke="#7fbbb3"/>
+        <text x="170" y="42" fill="#cfe9e6" font-size="12.5" text-anchor="middle">parent · prompt ↔ response (turn pair)</text>
+        <line x1="90" y1="54" x2="90" y2="96" stroke="#7fbbb3" stroke-dasharray="4 3"/>
+        <line x1="170" y1="54" x2="170" y2="96" stroke="#7fbbb3" stroke-dasharray="4 3"/>
+        <line x1="250" y1="54" x2="250" y2="96" stroke="#7fbbb3" stroke-dasharray="4 3"/>
+        <rect x="40" y="96" width="100" height="30" rx="5" fill="#343f44" stroke="#4f585e"/>
+        <text x="90" y="115" fill="#d3c6aa" font-size="11.5" text-anchor="middle">child · thinking</text>
+        <rect x="120" y="96" width="100" height="30" rx="5" fill="#425047" stroke="#a7c080"/>
+        <text x="170" y="115" fill="#d7ecc0" font-size="11.5" text-anchor="middle">child · tool pair</text>
+        <rect x="200" y="96" width="100" height="30" rx="5" fill="#343f44" stroke="#4f585e"/>
+        <text x="250" y="115" fill="#d3c6aa" font-size="11.5" text-anchor="middle">child · result</text>
+        <text x="360" y="80" fill="#9da9a0" font-size="12">query matches the highlighted child →</text>
+        <text x="360" y="100" fill="#9da9a0" font-size="12">viewer opens the full parent arc,</text>
+        <text x="360" y="120" fill="#9da9a0" font-size="12">highlighting the matched span</text>
+        <rect x="360" y="128" width="330" height="30" rx="6" fill="#425047" stroke="#a7c080"/>
+        <text x="525" y="147" fill="#d7ecc0" font-size="12" text-anchor="middle">retrieval unit = the conversation, not the fragment</text>
+      </svg>
+      <figcaption>Embed the arc; jump to the fragment.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-3">
+    <h3><span class="num">3</span>Replace the 300-in-doc-order scan with hybrid ranked retrieval</h3>
+    <div class="tags"><span class="tag axis">Vector store &amp; hybrid retrieval</span><span class="tag conf">Confidence 90%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>The current search returns the first 300 substring hits in document order, so the most relevant turn can sit invisible behind 300 earlier matches. Replace it with a hybrid retriever: a vector KNN leg for meaning plus a lexical leg — a <strong>trigram postings index</strong> (zoekt/livegrep-style) that finds exact identifiers such as <code>session-index.ts</code> or <code>spams_s_get_vehicle_data</code>, which tokenized BM25 splits and loses — fused with reciprocal-rank fusion, returning a ranked list with score provenance. Add a structured "find all references" leg over file paths, tool names, and PR links.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>components/jsonl/SessionIndexViewer.tsx:208–220</code> is a linear <code>doc.text.toLowerCase().includes(needle)</code> loop that <code>break</code>s at 300 — a filter, not a ranking. <span class="k">external:</span> the hybrid-or-nothing consensus across Mneme / SessionFlow / lore; zoekt and Sourcegraph build trigram and symbol indexes precisely because code-like text defeats tokenization.</dd>
+      <dt>Rationale</dt>
+      <dd>The pain is ranking as much as semantics. A substring filter cannot order results, so relevance is decided by document position. Fusing a lexical leg (exact strings developers search by name) with a vector leg (meaning) is the minimum bar the whole field has converged on, and it keeps the feature useful even before any embedder is present.</dd>
+      <dt>Downsides</dt>
+      <dd>Two retrieval paths plus fusion to tune and explain; a static trigram postings file adds a new build artifact; RRF discards score magnitude, so thresholding needs a fused-score scheme rather than a raw distance cut.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 170" role="img" aria-label="A query fans out to a lexical trigram leg and a vector KNN leg, fused by RRF into a ranked result list.">
+        <rect x="10" y="66" width="120" height="38" rx="8" fill="#343f44" stroke="#4f585e"/>
+        <text x="70" y="90" fill="#d3c6aa" font-size="12.5" text-anchor="middle">query</text>
+        <line x1="130" y1="80" x2="230" y2="42" stroke="#4f585e"/>
+        <line x1="130" y1="90" x2="230" y2="128" stroke="#4f585e"/>
+        <rect x="230" y="22" width="190" height="40" rx="8" fill="#3a515d" stroke="#7fbbb3"/>
+        <text x="325" y="40" fill="#cfe9e6" font-size="12" text-anchor="middle">lexical · trigram postings</text>
+        <text x="325" y="55" fill="#9da9a0" font-size="11" text-anchor="middle">exact ids, paths, regex</text>
+        <rect x="230" y="108" width="190" height="40" rx="8" fill="#543a48" stroke="#d699b6"/>
+        <text x="325" y="126" fill="#f0d3e2" font-size="12" text-anchor="middle">vector · KNN (cosine)</text>
+        <text x="325" y="141" fill="#9da9a0" font-size="11" text-anchor="middle">meaning, paraphrase</text>
+        <line x1="420" y1="42" x2="510" y2="82" stroke="#4f585e"/>
+        <line x1="420" y1="128" x2="510" y2="88" stroke="#4f585e"/>
+        <rect x="510" y="62" width="80" height="46" rx="8" fill="#4d4c43" stroke="#dbbc7f"/>
+        <text x="550" y="82" fill="#f0e2bd" font-size="12" text-anchor="middle">RRF</text>
+        <text x="550" y="98" fill="#9da9a0" font-size="11" text-anchor="middle">fuse</text>
+        <rect x="604" y="60" width="106" height="50" rx="8" fill="#425047" stroke="#a7c080"/>
+        <text x="657" y="80" fill="#d7ecc0" font-size="12" text-anchor="middle">ranked</text>
+        <text x="657" y="95" fill="#d7ecc0" font-size="12" text-anchor="middle">results</text>
+      </svg>
+      <figcaption>Two legs, one ranked list.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-4">
+    <h3><span class="num">4</span>Static doc vectors + browser-side query encoding via local LM Studio</h3>
+    <div class="tags"><span class="tag axis">Architecture boundary &amp; deployment</span><span class="tag conf">Confidence 80%</span><span class="tag cx-high">Complexity High</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Split the work by time. At index time the Node CLI — where LM Studio is local — precomputes every doc vector and ships them as a static, sharded binary sidecar next to <code>search.json</code>; at query time the browser encodes only the query and runs a brute-force cosine pass fused with the lexical leg, degrading silently to lexical-only when no embedder is reachable. Stamp the artifact with an embedding contract (<code>model</code>, <code>dims</code>, <code>normalized</code>, <code>available</code>) so a model or normalization change is detected rather than silently corrupting similarity.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>README.md:77</code> "Client-side processing (no data sent to servers)" coexists with <code>README.md:7</code>'s public live demo, and <code>AGENTS.md:53</code> forbids API routes; <code>SESSION_INDEX_VERSION=1</code> and the payload <code>version</code> show the artifact-versioning convention. <span class="k">external:</span> LM Studio's <code>/v1/embeddings</code> is OpenAI-compatible and local; EmbeddingGemma supports Matryoshka truncation; its normalization is undocumented and its 2K context truncates silently.</dd>
+      <dt>Rationale</dt>
+      <dd>Query embedding is the only runtime model dependency. Precomputing docs and shrinking the runtime model to the browser keeps the serverless, privacy-preserving boundary intact while still delivering true semantic recall, and the same static build degrades gracefully on the hosted demo that has no LM Studio.</dd>
+      <dt>Downsides</dt>
+      <dd>A browser-side embedding model (EmbeddingGemma-300M-class via transformers.js/WebGPU) is a heavy new client dependency and may not run on all devices; brute-force cosine in the browser does not scale past a few hundred thousand vectors; the whole approach hinges on an unverified normalization/truncation contract that must be tested empirically.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 160" role="img" aria-label="Build time embeds docs via local LM Studio into a static vector sidecar; runtime embeds only the query in the browser, with a lexical fallback.">
+        <text x="10" y="20" fill="#9da9a0" font-size="12" font-weight="600">BUILD (npm run index, local)</text>
+        <rect x="10" y="30" width="150" height="40" rx="8" fill="#425047" stroke="#a7c080"/>
+        <text x="85" y="55" fill="#d7ecc0" font-size="12" text-anchor="middle">LM Studio /v1/embeddings</text>
+        <line x1="160" y1="50" x2="215" y2="50" stroke="#a7c080" stroke-dasharray="4 3"/>
+        <rect x="215" y="30" width="150" height="40" rx="8" fill="#343f44" stroke="#4f585e"/>
+        <text x="290" y="49" fill="#d3c6aa" font-size="12" text-anchor="middle">vectors.bin (static)</text>
+        <text x="290" y="63" fill="#9da9a0" font-size="10.5" text-anchor="middle">+ search.json</text>
+        <text x="10" y="104" fill="#9da9a0" font-size="12" font-weight="600">RUNTIME (browser, static host)</text>
+        <rect x="10" y="114" width="150" height="36" rx="8" fill="#3a515d" stroke="#7fbbb3"/>
+        <text x="85" y="137" fill="#cfe9e6" font-size="12" text-anchor="middle">embed query only</text>
+        <line x1="160" y1="132" x2="215" y2="132" stroke="#7fbbb3" stroke-dasharray="4 3"/>
+        <rect x="215" y="114" width="150" height="36" rx="8" fill="#4d4c43" stroke="#dbbc7f"/>
+        <text x="290" y="137" fill="#f0e2bd" font-size="12" text-anchor="middle">cosine + lexical fuse</text>
+        <rect x="380" y="114" width="330" height="36" rx="8" fill="#514045" stroke="#e67e80"/>
+        <text x="545" y="137" fill="#f3c9c9" font-size="11.5" text-anchor="middle">if no embedder → lexical-only fallback (public demo stays working)</text>
+      </svg>
+      <figcaption>One static index, two capability tiers.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-5">
+    <h3><span class="num">5</span>Content-addressed embedding cache → incremental re-embed and a session watcher</h3>
+    <div class="tags"><span class="tag axis">Ingest pipeline &amp; freshness</span><span class="tag conf">Confidence 92%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Every rebuild currently deletes the output directory and re-derives everything, so embedding would be redone in full on each run — fatal given LM Studio's concurrency hangs. Add a persistent cache keyed by <code>sha(text + model + dims + version)</code> so unchanged docs skip embedding and only new or changed turns and agents are sent, driven through a single-worker queue with modest batches and responses sorted by <code>index</code>. Because the cache makes delta runs cheap, a long-running watcher can then embed only the appended JSONL tail and remove the manual <code>npm run index</code> ritual.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>scripts/build-session-index.ts:142</code> <code>if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true })</code> — a full teardown every run; <code>builtAt</code> is wall-clock, not content-derived. <span class="k">external:</span> git's content-addressed object store and Bazel/Salsa red-green recomputation; SessionFlow ships an incremental watcher over 21K+ turns; LM Studio hangs/crashes under concurrency.</dd>
+      <dt>Rationale</dt>
+      <dd>Embedding cost is intrinsically O(changed docs), not O(corpus). A hash-keyed cache converts the expensive first build into a one-time investment and turns every later re-index nearly free — and it minimizes exactly the LM Studio calls that destabilize the embedder. It is the precondition for both a watcher and any multi-session scale-out.</dd>
+      <dt>Downsides</dt>
+      <dd>A new persistent, gitignored cache directory to manage and invalidate; correctness depends on hashing the exact embedded text (normalization and truncation included) so a silent model change does not reuse stale vectors; the watcher adds a local-only daemon that the static-host model cannot assume.</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="idea-6">
+    <h3><span class="num">6</span>Explainable, filterable semantic results</h3>
+    <div class="tags"><span class="tag axis">Query &amp; UX in the viewer</span><span class="tag conf">Confidence 85%</span><span class="tag cx-med">Complexity Medium</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>A semantic hit has no literal match, so the existing snippet helper falls back to the first 200 characters and the user cannot see <em>why</em> a result is relevant. Store the matched chunk span per result and render that span with its surrounding item, plus a "why this matched" cue naming the source index (reasoning / change / context) and the fused score. Add filter chips over metadata already in the headers — kind, tool name, subagent type, model, error, time range — so a query can be scoped before it runs, and pre-filter the candidate set before KNN.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>SessionIndexViewer.tsx:576–582</code> — <code>snippet()</code> returns <code>text.slice(0, 200)</code> when <code>indexOf</code> is −1, which is the normal path for a vector hit, and <code>Highlight</code> wraps literal matches only; the agent-list filter at <code>:222–233</code> already matches description/subagentType/model/task/id, and <code>TurnHeader</code>/<code>AgentHeader</code> carry the facets. <span class="k">external:</span> observability's rule that high-cardinality fields belong in structured metadata, not labels; rerankers surface scores users need to trust.</dd>
+      <dt>Rationale</dt>
+      <dd>Semantic search only pays off if the user can confirm relevance at a glance and narrow scope. Without matched-span evidence and filters, the feature will feel <em>worse</em> than substring search for the queries that do match literally — the exact trust failure that kills adoption.</dd>
+      <dt>Downsides</dt>
+      <dd>Requires storing chunk spans and scores in the payload; adds query-UI surface (facet chips, score display) and a candidate pre-filter path; explaining a fused score honestly without implying false precision is a design problem, not just a rendering one.</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="idea-7">
+    <h3><span class="num">7</span>Cross-session "I solved this before" search</h3>
+    <div class="tags"><span class="tag axis">Query &amp; UX in the viewer</span><span class="tag conf">Confidence 82%</span><span class="tag cx-high">Complexity High</span></div>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Search is strictly per-session today — the catalog lists sessions but carries no doc text — so a user who remembers fixing a problem in some earlier session has no way to find it. Build a catalog-level embedding index keyed by session id and turn the session picker into a scope toggle ("this session" / "all sessions"), returning the session plus the matching turn as the result. Keep the per-session payload intact so opening a result still loads only one shard or agent transcript.</dd>
+      <dt>Basis</dt>
+      <dd class="basis"><span class="k">direct:</span> <code>SessionIndexViewer.tsx:123–132</code> <code>ensureSearch</code> loads only <code>fetchSearch(sessionId)</code>; <code>scripts/build-session-index.ts:215–229</code> writes the catalog with only id/title/counts/models/bytes and no doc text. <span class="k">external:</span> email/legal discovery indexes the thread unit and metadata separately; observability time-shards an index-everything corpus.</dd>
+      <dt>Rationale</dt>
+      <dd>The recurring real-world query for a returning user is "where did I do this before", which is cross-session by nature and impossible in the current single-session scan. It turns the session catalog from a file list into actual memory — the highest-value retrieval question the tool currently cannot answer at all.</dd>
+      <dt>Downsides</dt>
+      <dd>A second, catalog-level index to build and keep fresh across sessions; much larger corpus (many sessions × 20K docs) pushes past brute-force comfort and re-raises the store question; result UX must convey session context, and stale sessions need re-indexing discipline.</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 720 150" role="img" aria-label="Many per-session indexes feed a catalog-level index that answers cross-session queries.">
+        <rect x="10" y="24" width="150" height="26" rx="6" fill="#343f44" stroke="#4f585e"/>
+        <text x="85" y="41" fill="#d3c6aa" font-size="11.5" text-anchor="middle">session A · index</text>
+        <rect x="10" y="60" width="150" height="26" rx="6" fill="#343f44" stroke="#4f585e"/>
+        <text x="85" y="77" fill="#d3c6aa" font-size="11.5" text-anchor="middle">session B · index</text>
+        <rect x="10" y="96" width="150" height="26" rx="6" fill="#343f44" stroke="#4f585e"/>
+        <text x="85" y="113" fill="#d3c6aa" font-size="11.5" text-anchor="middle">session C · index</text>
+        <line x1="160" y1="37" x2="300" y2="70" stroke="#4f585e"/>
+        <line x1="160" y1="73" x2="300" y2="73" stroke="#4f585e"/>
+        <line x1="160" y1="109" x2="300" y2="76" stroke="#4f585e"/>
+        <rect x="300" y="52" width="180" height="42" rx="8" fill="#3a515d" stroke="#7fbbb3"/>
+        <text x="390" y="71" fill="#cfe9e6" font-size="12" text-anchor="middle">catalog-level index</text>
+        <text x="390" y="86" fill="#9da9a0" font-size="11" text-anchor="middle">session + turn keyed</text>
+        <line x1="480" y1="73" x2="560" y2="73" stroke="#7fbbb3" stroke-dasharray="4 3"/>
+        <rect x="560" y="52" width="150" height="42" rx="8" fill="#425047" stroke="#a7c080"/>
+        <text x="635" y="71" fill="#d7ecc0" font-size="12" text-anchor="middle">"did this before"</text>
+        <text x="635" y="86" fill="#d7ecc0" font-size="11" text-anchor="middle">→ session + turn</text>
+      </svg>
+      <figcaption>Per-session indexes roll up into a memory that spans sessions.</figcaption>
+    </figure>
+  </article>
+</section>
+
+<section id="rejections">
+  <h2>Rejection Summary</h2>
+  <table>
+    <thead><tr><th class="rid">#</th><th>Idea</th><th>Reason rejected</th></tr></thead>
+    <tbody>
+      <tr><td class="rid">—</td><td>Single SQLite file (FTS5 + sqlite-vec) served statically / range-read in the browser</td><td>basis refuted — the load-bearing mechanism (in-browser static/range-read of SQLite) is unsupported; the static-vector path (idea 4) already satisfies the store need, and a local sidecar variant is noted as its alternative</td></tr>
+      <tr><td class="rid">—</td><td>Kind-aware retrieval contract (embed prose, filter tool identity, dedupe artifacts)</td><td>merged into idea 2</td></tr>
+      <tr><td class="rid">—</td><td>Watcher: embed the JSONL tail incrementally</td><td>merged into idea 5 (the cache is its precondition)</td></tr>
+      <tr><td class="rid">—</td><td>Forensic super-timeline: interleave main + all subagents</td><td>merged into idea 1 as its mechanism</td></tr>
+      <tr><td class="rid">—</td><td>Embedding contract stamping (model/dims/normalized)</td><td>merged into idea 4; on its own it is version-stamp hygiene, adopted rather than debated</td></tr>
+      <tr><td class="rid">—</td><td>Backend-agnostic embedding work units from the pure transform layer</td><td>basis partly false (two emission sites, not one) and below the meeting-test floor — internal plumbing, not a decision</td></tr>
+      <tr><td class="rid">—</td><td>"More like this" / related-in-session rail (no query)</td><td>strong but overlaps the retrieval-UX direction of ideas 3 and 6; better developed as a brainstorm variant of the same doc→view plumbing</td></tr>
+      <tr><td class="rid">—</td><td>Semantic session outline via turn-vector clustering</td><td>basis weak — the cited evidence shows only that the Turns tab renders previews; clustering and labeling are asserted, not supported</td></tr>
+      <tr><td class="rid">—</td><td>Relevance-weighted timeline (search re-sorts the Turns tab)</td><td>overlaps ideas 3 and 6; medium value against the survivor set</td></tr>
+      <tr><td class="rid">—</td><td>Progressive-decode Matryoshka mipmap (coarse resident + fine streamed)</td><td>clever, but an implementation detail of the store at this session's scale (21,432 docs), not a standalone direction</td></tr>
+      <tr><td class="rid">—</td><td>Two-mode product: static demo + optional local sidecar (sqlite-vec + cross-encoder rerank)</td><td>a legitimate alternative architecture, but idea 4 preserves the repo's no-server identity with less machinery; retained as the noted alternative</td></tr>
+    </tbody>
+  </table>
+  <p class="callout">All five axes are covered by the survivor set — no deliberate coverage gaps.</p>
+</section>
+
+<footer class="composition-signal">
+  Composed 2026-10-09 by <code>ce-ideate</code> from the user request "generate embeddings into a database so we can quickly search entire sessions" (LM Studio + <code>unsloth/embeddinggemma-2-GGUF</code>), grounded in <code>claude-JSONL-browser</code>.
+</footer>
+
+</div>
+</body>
+</html>
