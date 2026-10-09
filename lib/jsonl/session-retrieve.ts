@@ -278,32 +278,28 @@ function collectGraph(db: DatabaseSync, ids: string[], limit: number): { nodes: 
   return { nodes, edges: keptEdges, truncated }
 }
 
-function expandOnce(db: DatabaseSync, ids: string[]): string[] {
-  const set = new Set(ids)
-  const stmt = db.prepare('SELECT from_id, to_id FROM edges WHERE from_id = ? OR to_id = ?')
-  for (const id of ids) {
-    for (const edge of stmt.all(id, id) as unknown as Array<{ from_id: string; to_id: string }>) {
-      set.add(edge.from_id)
-      set.add(edge.to_id)
-    }
-  }
-  return [...set]
-}
-
 /** Escapes LIKE metacharacters so a session id cannot match other sessions' rows. */
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, '\\$&')
 }
 
-/** Nodes and edges for one session (session + its item nodes + directly connected file/pr nodes). */
+/** Nodes and edges for one session (session + a bounded set of its item nodes + their file/pr nodes). */
 export function readSessionGraph(db: DatabaseSync, sessionId: string, options: { limit?: number } = {}): SessionGraphView {
   const limit = options.limit ?? 300
   const sid = escapeLike(sessionId)
-  const seed = db
-    .prepare("SELECT id FROM nodes WHERE id = ? OR id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' LIMIT ?")
-    .all(`session:${sessionId}`, `tool:${sid}:%`, `agent:${sid}:%`, limit) as unknown as Array<{ id: string }>
+  // Bounded seed: do NOT expand the session hub (it has a `has` edge to every item).
+  const items = db
+    .prepare("SELECT id FROM nodes WHERE id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' ORDER BY id LIMIT ?")
+    .all(`tool:${sid}:%`, `agent:${sid}:%`, limit) as unknown as Array<{ id: string }>
+  const itemIds = items.map((row) => row.id)
+  const targets = itemIds.length
+    ? (db
+        .prepare(`SELECT DISTINCT to_id AS id FROM edges WHERE from_id IN (${itemIds.map(() => '?').join(',')})`)
+        .all(...itemIds) as unknown as Array<{ id: string }>)
+    : []
+  const ids = [...new Set([`session:${sessionId}`, ...itemIds, ...targets.map((row) => row.id)])].slice(0, limit * 4)
   const duplicates = duplicateWork(db, sessionId).slice(0, limit)
-  return { ...collectGraph(db, expandOnce(db, seed.map((row) => row.id)), limit), duplicates }
+  return { ...collectGraph(db, ids, limit), duplicates }
 }
 
 /** Bounded neighborhood of a node, for the viewer's neighborhood lens. */

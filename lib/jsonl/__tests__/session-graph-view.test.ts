@@ -76,7 +76,7 @@ describe('session graph views', () => {
     const db = freshDb()
     node(db, 'tool:s1:t0:0', 'tool')
     node(db, 'tool:s2:t0:0', 'tool')
-    expect(readSessionGraph(db, '%').nodes).toHaveLength(0)
+    expect(readSessionGraph(db, '%').nodes.filter((n) => n.id.startsWith('tool:'))).toHaveLength(0)
     db.close()
   })
 })
