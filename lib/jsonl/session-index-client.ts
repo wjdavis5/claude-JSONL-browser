@@ -89,6 +89,7 @@ export interface GraphNodeView {
   kind: string
   label: string
   degree: number
+  ts?: number
 }
 
 export interface GraphEdgeView {

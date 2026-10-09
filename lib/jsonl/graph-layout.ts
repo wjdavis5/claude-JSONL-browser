@@ -119,3 +119,47 @@ export function nodeViewTarget(nodeId: string): string | null {
   const parts = parseGraphNodeId(nodeId)
   return parts && (parts.kind === 'tool' || parts.kind === 'agent') ? parts.key : null
 }
+
+// ---------------------------------------------------------------------------
+// Temporal layout (x = time)
+// ---------------------------------------------------------------------------
+
+const KIND_ROW: Record<string, number> = { session: 0, agent: 1, tool: 2, tool_result: 2, file: 3, pr: 3 }
+const ROW_LABELS = ['session', 'agents', 'tools', 'files / PRs']
+
+export interface TimeLayoutNode extends LayoutInputNode {
+  x: number
+  y: number
+  ts?: number
+}
+
+export interface TimeLayout {
+  nodes: TimeLayoutNode[]
+  width: number
+  height: number
+  rows: string[]
+  rowH: number
+}
+
+/**
+ * Places nodes on a time axis: x = (ts - t0) * pxPerMs, y = a lane by kind.
+ * Distance between nodes is therefore proportional to the time between events,
+ * and changing pxPerMs (zoom) rescales the time axis.
+ */
+export function computeTimeLayout(
+  nodes: Array<LayoutInputNode & { ts?: number }>,
+  options: { t0: number; t1: number; pxPerMs: number; rowH?: number },
+): TimeLayout {
+  const rowH = options.rowH ?? 120
+  const placed: TimeLayoutNode[] = nodes.map((node) => {
+    const row = KIND_ROW[node.kind] ?? 2
+    const x = (node.ts !== undefined ? (node.ts - options.t0) * options.pxPerMs : 0) + 40
+    let hash = 0
+    for (let i = 0; i < node.id.length; i += 1) hash = (hash * 31 + node.id.charCodeAt(i)) >>> 0
+    const jitter = ((hash % 1000) / 1000 - 0.5) * (rowH - 40)
+    return { ...node, x, y: row * rowH + rowH / 2 + jitter }
+  })
+  const width = Math.max(240, (options.t1 - options.t0) * options.pxPerMs + 80)
+  return { nodes: placed, width, height: ROW_LABELS.length * rowH, rows: ROW_LABELS, rowH }
+}
+

@@ -228,6 +228,8 @@ export interface GraphNodeView {
   kind: string
   label: string
   degree: number
+  /** Event time (epoch ms) when known; file/pr nodes inherit their earliest neighbour's time. */
+  ts?: number
 }
 
 export interface GraphEdgeView {
@@ -357,11 +359,34 @@ export function readSessionGraph(db: DatabaseSync, sessionId: string, options: {
   if (remaining > 0) chosen.push(...(byKind.get('tool') ?? []).sort(byDegree).slice(0, remaining))
 
   const keep = new Set(chosen)
-  const nodes = chosen.map((id) => ({ id, kind: kindById.get(id) ?? 'unknown', label: labelFromProps(id, propsById.get(id) ?? null), degree: degree.get(id) ?? 0 }))
-  const edges = edgeRows
+  const keptEdges = edgeRows
     .filter((edge) => keep.has(edge.from_id) && keep.has(edge.to_id))
     .map((edge) => ({ from: edge.from_id, to: edge.to_id, type: edge.type }))
-  return { nodes, edges, truncated: candidates.size > limit, duplicates: duplicateWork(db, sessionId).slice(0, limit) }
+
+  const tsById = new Map<string, number>()
+  for (const id of chosen) {
+    const props = propsById.get(id)
+    const raw = props && typeof props.ts === 'string' ? Date.parse(props.ts) : NaN
+    if (Number.isFinite(raw)) tsById.set(id, raw)
+  }
+  for (const id of chosen) {
+    if (tsById.has(id)) continue
+    let earliest = Number.POSITIVE_INFINITY
+    for (const edge of keptEdges) {
+      if (edge.from === id && tsById.has(edge.to)) earliest = Math.min(earliest, tsById.get(edge.to) as number)
+      if (edge.to === id && tsById.has(edge.from)) earliest = Math.min(earliest, tsById.get(edge.from) as number)
+    }
+    if (Number.isFinite(earliest)) tsById.set(id, earliest)
+  }
+
+  const nodes = chosen.map((id) => ({
+    id,
+    kind: kindById.get(id) ?? 'unknown',
+    label: labelFromProps(id, propsById.get(id) ?? null),
+    degree: degree.get(id) ?? 0,
+    ts: tsById.get(id),
+  }))
+  return { nodes, edges: keptEdges, truncated: candidates.size > limit, duplicates: duplicateWork(db, sessionId).slice(0, limit) }
 }
 
 /** Bounded neighborhood of a node, for the viewer's neighborhood lens. */
