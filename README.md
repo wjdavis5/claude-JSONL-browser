@@ -84,6 +84,12 @@ Claude Code CLI doesn't have a built-in export feature for conversation history.
 - Create documentation from Claude interactions
 - Analyze your Claude usage patterns
 
+## Local session database (hybrid search + graph)
+
+`npm run index` can build a SQLite session database holding the full untruncated text, an FTS5 + `sqlite-vec` hybrid index, and a session graph. Retrieval runs in Node through `/api/session`, and the viewer calls it; when the database or LM Studio is unavailable the viewer falls back to the static lexical search, so the hosted demo keeps working.
+
+Prerequisite for database mode: Node 24 and LM Studio running locally with `text-embedding-embeddinggemma-2` loaded. The database lives in `data/` (gitignored) and is never served statically.
+
 ---
 
 Created for the Claude Code community by [Linda](https://withlinda.dev)
