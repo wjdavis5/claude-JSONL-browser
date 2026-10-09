@@ -4,6 +4,9 @@ import { CHUNKER_VERSION, contentHash, normalizeText, type Embedder } from './se
 /** Token-aware ceiling for a single embedded chunk (well under the 2K context). */
 export const MAX_CHUNK_CHARS = 8000
 
+/** Item kinds worth embedding. Metadata noise (attachments, system notes, reminders) is skipped. */
+const EMBED_KINDS = new Set(['prompt', 'text', 'think', 'tool', 'agent', 'compact'])
+
 export interface IngestItem {
   /** Viewer jump target, e.g. `t<turn>:<item>` or `a:<agentId>`. */
   parentId: string
@@ -42,6 +45,7 @@ export function buildChunkText(item: IngestItem): string {
 export function chunkItems(items: IngestItem[]): ChunkDraft[] {
   const drafts: ChunkDraft[] = []
   for (const item of items) {
+    if (!EMBED_KINDS.has(item.kind)) continue
     const text = buildChunkText(item)
     if (!text) continue
     if (text.length <= MAX_CHUNK_CHARS) {
@@ -109,56 +113,80 @@ export async function ingestSession(db: DatabaseSync, options: IngestOptions): P
     }
   }
 
-  // Embed OUTSIDE the write transaction so a slow LM Studio call never holds the lock.
-  let pendingVectors: Float32Array[] = []
-  let embedFailed = false
-  if (pending.length > 0) {
+  // Stream embeddings and writes in groups so progress is visible and partial
+  // results are queryable while a long ingest runs.
+  const upsertChunk = db.prepare(
+    `INSERT INTO chunks(session_id, parent_id, kind, text, text_hash, embedding_status, embedding_model, dims)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, parent_id, text_hash) DO UPDATE SET
+       kind = excluded.kind,
+       text = excluded.text,
+       embedding_status = excluded.embedding_status,
+       embedding_model = excluded.embedding_model,
+       dims = excluded.dims
+     RETURNING id`,
+  )
+  const deleteVec = db.prepare('DELETE FROM vec_chunks WHERE id = ?')
+  const insertVec = db.prepare('INSERT INTO vec_chunks(id, embedding) VALUES (?, ?)')
+  const progress = db.prepare(
+    `INSERT INTO ingest_progress(session_id, processed, total, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET processed = excluded.processed, total = excluded.total, updated_at = excluded.updated_at`,
+  )
+  const storeVector = (id: number, vector: Float32Array): void => {
+    deleteVec.run(BigInt(id))
+    insertVec.run(BigInt(id), vector)
+  }
+  const writeGroup = (entries: Array<{ draft: ChunkDraft; hash: string; vector: Float32Array | null }>, countEmbedded: boolean): void => {
+    if (entries.length === 0) return
+    db.exec('BEGIN')
     try {
-      pendingVectors = await embedder.embed(pending.map((entry) => entry.draft.text))
+      for (const { draft, hash, vector } of entries) {
+        const row = upsertChunk.get(sessionId, draft.parentId, draft.kind, draft.text, hash, vector ? 'complete' : 'partial', embedder.model, embedder.dims) as { id: number }
+        if (vector) {
+          storeVector(Number(row.id), vector)
+          if (countEmbedded) stats.embedded += 1
+        }
+      }
+      db.exec('COMMIT')
     } catch (error) {
-      embedFailed = true
-      stats.partial += pending.length
-      options.onError?.(error as Error)
+      db.exec('ROLLBACK')
+      throw error
     }
   }
+  const total = drafts.length
+  const markProgress = (processed: number): void => {
+    progress.run(sessionId, processed, total, new Date().toISOString())
+  }
 
+  // Reused (already-complete) chunks write in one group.
+  writeGroup(prepared.map((entry) => ({ draft: entry.draft, hash: entry.hash, vector: entry.vector })), false)
+  let processed = prepared.length
+  markProgress(processed)
+
+  // Pending chunks embed and write in bounded groups.
+  const STREAM = 256
+  for (let i = 0; i < pending.length; i += STREAM) {
+    const group = pending.slice(i, i + STREAM)
+    let vectors: Float32Array[] = []
+    let failed = false
+    try {
+      vectors = await embedder.embed(group.map((entry) => entry.draft.text))
+    } catch (error) {
+      failed = true
+      stats.partial += group.length
+      options.onError?.(error as Error)
+    }
+    writeGroup(group.map((entry, index) => ({ draft: entry.draft, hash: entry.hash, vector: failed ? null : (vectors[index] ?? null) })), true)
+    processed += group.length
+    markProgress(processed)
+  }
+
+  // Prune chunks that this run no longer produces (edited/removed items).
+  const newKeys = new Set<string>()
+  for (const entry of prepared) newKeys.add(`${entry.draft.parentId}\u0000${entry.hash}`)
+  for (const entry of pending) newKeys.add(`${entry.draft.parentId}\u0000${entry.hash}`)
   db.exec('BEGIN')
   try {
-    const upsertChunk = db.prepare(
-      `INSERT INTO chunks(session_id, parent_id, kind, text, text_hash, embedding_status, embedding_model, dims)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(session_id, parent_id, text_hash) DO UPDATE SET
-         kind = excluded.kind,
-         text = excluded.text,
-         embedding_status = excluded.embedding_status,
-         embedding_model = excluded.embedding_model,
-         dims = excluded.dims
-       RETURNING id`,
-    )
-    const deleteVec = db.prepare('DELETE FROM vec_chunks WHERE id = ?')
-    const insertVec = db.prepare('INSERT INTO vec_chunks(id, embedding) VALUES (?, ?)')
-    const storeVector = (id: number, vector: Float32Array): void => {
-      deleteVec.run(BigInt(id))
-      insertVec.run(BigInt(id), vector)
-    }
-
-    for (const { draft, hash, vector } of prepared) {
-      const row = upsertChunk.get(sessionId, draft.parentId, draft.kind, draft.text, hash, 'complete', embedder.model, embedder.dims) as { id: number }
-      storeVector(Number(row.id), vector)
-    }
-    pending.forEach((entry, index) => {
-      const complete = !embedFailed && Boolean(pendingVectors[index])
-      const row = upsertChunk.get(sessionId, entry.draft.parentId, entry.draft.kind, entry.draft.text, entry.hash, complete ? 'complete' : 'partial', embedder.model, embedder.dims) as { id: number }
-      if (complete) {
-        storeVector(Number(row.id), pendingVectors[index])
-        stats.embedded += 1
-      }
-    })
-
-    // Prune chunks that this run no longer produces (edited/removed items).
-    const newKeys = new Set<string>()
-    for (const entry of prepared) newKeys.add(`${entry.draft.parentId}\u0000${entry.hash}`)
-    for (const entry of pending) newKeys.add(`${entry.draft.parentId}\u0000${entry.hash}`)
     const existingRows = db.prepare('SELECT id, parent_id, text_hash FROM chunks WHERE session_id = ?').all(sessionId) as unknown as Array<{
       id: number
       parent_id: string | null

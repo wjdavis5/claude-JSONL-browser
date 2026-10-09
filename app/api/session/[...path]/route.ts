@@ -4,7 +4,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
-const OPERATIONS = new Set(['search', 'graph'])
+const OPERATIONS = new Set(['search', 'graph', 'status'])
 
 function forbidden(reason: string): Response {
   return Response.json({ error: reason }, { status: 403 })
@@ -59,6 +59,11 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
     if (operation === 'graph') {
       if (!sessionId) return Response.json({ error: 'sessionId required' }, { status: 400 })
       return Response.json(readSessionGraph(db, sessionId, { limit: k * 5 }))
+    }
+    if (operation === 'status') {
+      if (!sessionId) return Response.json({ error: 'sessionId required' }, { status: 400 })
+      const row = db.prepare('SELECT processed, total, updated_at FROM ingest_progress WHERE session_id = ?').get(sessionId)
+      return Response.json(row ?? null)
     }
     let vector: Float32Array | undefined
     try {

@@ -24,6 +24,7 @@ import {
   fetchAgent,
   fetchCatalog,
   fetchHybridSearch,
+  fetchIndexStatus,
   fetchManifest,
   fetchSearch,
   fetchTurnShard,
@@ -33,6 +34,7 @@ import {
   formatTokens,
   shardForTurn,
   type HybridSearchHit,
+  type IndexStatus,
   type SearchDoc,
   type SearchPayload,
 } from '@/lib/jsonl/session-index-client'
@@ -64,6 +66,7 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
   const [highlight, setHighlight] = useState<{ turn: number; item: number } | null>(null)
   const [hybridHits, setHybridHits] = useState<HybridSearchHit[] | null>(null)
   const [hybridActive, setHybridActive] = useState(false)
+  const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastScrolledTurn = useRef<number | null>(null)
@@ -109,6 +112,26 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
       .finally(() => !cancelled && setLoadingManifest(false))
     return () => {
       cancelled = true
+    }
+  }, [sessionId])
+
+  // Poll live ingest progress while a session is selected.
+  useEffect(() => {
+    if (!sessionId) {
+      setIndexStatus(null)
+      return
+    }
+    let cancelled = false
+    const poll = () => {
+      void fetchIndexStatus(sessionId).then((status) => {
+        if (!cancelled) setIndexStatus(status)
+      })
+    }
+    poll()
+    const timer = window.setInterval(poll, 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
     }
   }, [sessionId])
 
@@ -368,6 +391,19 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
                   <span key={model} className="flex items-center gap-1"><Cpu className="w-3 h-3" />{model}</span>
                 ))}
               </div>
+              {indexStatus && indexStatus.total > 0 && indexStatus.processed < indexStatus.total && (
+                <div className="mt-2" title="Indexing in progress">
+                  <div className="h-1 rounded bg-everforest-bg2 overflow-hidden">
+                    <div
+                      className="h-full bg-everforest-green transition-all duration-500"
+                      style={{ width: `${Math.round((indexStatus.processed / indexStatus.total) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 text-[10px] text-everforest-grey1">
+                    Indexing… {Math.round((indexStatus.processed / indexStatus.total) * 100)}%
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-sm text-everforest-grey1 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>

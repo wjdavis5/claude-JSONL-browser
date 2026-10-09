@@ -115,6 +115,24 @@ export async function fetchSessionGraph(sessionId: string, limit = 300): Promise
   }
 }
 
+export interface IndexStatus {
+  processed: number
+  total: number
+  updated_at: string
+}
+
+/** Live ingest progress for a session; null when unavailable or not indexing. */
+export async function fetchIndexStatus(sessionId: string): Promise<IndexStatus | null> {
+  try {
+    const response = await fetch(`/api/session/status?sessionId=${encodeURIComponent(sessionId)}`)
+    if (!response.ok) return null
+    const json = (await response.json()) as IndexStatus | null
+    return json && typeof json.total === 'number' ? json : null
+  } catch {
+    return null
+  }
+}
+
 export function shardForTurn(turnIndex: number, shardSize: number): number {
   return Math.floor(turnIndex / Math.max(1, shardSize))
 }

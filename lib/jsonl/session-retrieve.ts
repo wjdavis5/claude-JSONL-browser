@@ -283,23 +283,61 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, '\\$&')
 }
 
-/** Nodes and edges for one session (session + a bounded set of its item nodes + their file/pr nodes). */
+/** Per-kind caps so a session graph shows the actors and files that explain it, not thousands of tool calls. */
+const KIND_QUOTA: Record<string, number> = { session: 1, agent: 200, file: 120, pr: 40, tool_result: 30 }
+
+/**
+ * A bounded, meaningful view of one session: the session, its busiest agents, the
+ * files and PRs they touched (by degree), and a few tool nodes to fill the budget.
+ */
 export function readSessionGraph(db: DatabaseSync, sessionId: string, options: { limit?: number } = {}): SessionGraphView {
-  const limit = options.limit ?? 300
+  const limit = options.limit ?? 400
   const sid = escapeLike(sessionId)
-  // Bounded seed: do NOT expand the session hub (it has a `has` edge to every item).
-  const items = db
-    .prepare("SELECT id FROM nodes WHERE id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' ORDER BY id LIMIT ?")
-    .all(`tool:${sid}:%`, `agent:${sid}:%`, limit) as unknown as Array<{ id: string }>
-  const itemIds = items.map((row) => row.id)
-  const targets = itemIds.length
-    ? (db
-        .prepare(`SELECT DISTINCT to_id AS id FROM edges WHERE from_id IN (${itemIds.map(() => '?').join(',')})`)
-        .all(...itemIds) as unknown as Array<{ id: string }>)
-    : []
-  const ids = [...new Set([`session:${sessionId}`, ...itemIds, ...targets.map((row) => row.id)])].slice(0, limit * 4)
-  const duplicates = duplicateWork(db, sessionId).slice(0, limit)
-  return { ...collectGraph(db, ids, limit), duplicates }
+  const nodeRows = db.prepare('SELECT id, kind FROM nodes').all() as unknown as Array<{ id: string; kind: string }>
+  const kindById = new Map(nodeRows.map((row) => [row.id, row.kind]))
+  const isSessionNode = (id: string): boolean =>
+    id === `session:${sessionId}` || id.startsWith(`tool:${sessionId}:`) || id.startsWith(`agent:${sessionId}:`)
+  const edgeRows = db
+    .prepare(
+      "SELECT from_id, to_id, type FROM edges WHERE from_id = ? OR from_id LIKE ? ESCAPE '\\' OR from_id LIKE ? ESCAPE '\\' OR to_id = ? OR to_id LIKE ? ESCAPE '\\' OR to_id LIKE ? ESCAPE '\\'",
+    )
+    .all(`session:${sessionId}`, `tool:${sid}:%`, `agent:${sid}:%`, `session:${sessionId}`, `tool:${sid}:%`, `agent:${sid}:%`) as unknown as Array<{
+    from_id: string
+    to_id: string
+    type: string
+  }>
+
+  const degree = new Map<string, number>()
+  const candidates = new Set<string>()
+  for (const edge of edgeRows) {
+    degree.set(edge.from_id, (degree.get(edge.from_id) ?? 0) + 1)
+    degree.set(edge.to_id, (degree.get(edge.to_id) ?? 0) + 1)
+    candidates.add(edge.from_id)
+    candidates.add(edge.to_id)
+  }
+  for (const row of nodeRows) if (isSessionNode(row.id)) candidates.add(row.id)
+
+  const byKind = new Map<string, string[]>()
+  for (const id of candidates) {
+    const kind = kindById.get(id) ?? 'unknown'
+    const list = byKind.get(kind)
+    if (list) list.push(id)
+    else byKind.set(kind, [id])
+  }
+  const byDegree = (a: string, b: string): number => (degree.get(b) ?? 0) - (degree.get(a) ?? 0)
+  const chosen: string[] = []
+  for (const kind of ['session', 'agent', 'file', 'pr', 'tool_result']) {
+    chosen.push(...(byKind.get(kind) ?? []).sort(byDegree).slice(0, KIND_QUOTA[kind] ?? 0))
+  }
+  const remaining = limit - chosen.length
+  if (remaining > 0) chosen.push(...(byKind.get('tool') ?? []).sort(byDegree).slice(0, remaining))
+
+  const keep = new Set(chosen)
+  const nodes = chosen.map((id) => ({ id, kind: kindById.get(id) ?? 'unknown', label: nodeLabel(id), degree: degree.get(id) ?? 0 }))
+  const edges = edgeRows
+    .filter((edge) => keep.has(edge.from_id) && keep.has(edge.to_id))
+    .map((edge) => ({ from: edge.from_id, to: edge.to_id, type: edge.type }))
+  return { nodes, edges, truncated: candidates.size > limit, duplicates: duplicateWork(db, sessionId).slice(0, limit) }
 }
 
 /** Bounded neighborhood of a node, for the viewer's neighborhood lens. */

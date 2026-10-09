@@ -50,7 +50,7 @@ export function createLmStudioEmbedder(options: LmStudioOptions = {}): Embedder 
   const baseUrl = (options.baseUrl ?? 'http://localhost:1234').replace(/\/$/, '')
   const model = options.model ?? 'text-embedding-embeddinggemma-2'
   const dims = options.dims ?? VECTOR_DIMS
-  const BATCH = 16
+  const BATCH = 64
   return {
     model,
     dims,
