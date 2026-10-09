@@ -61,11 +61,6 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
   }, [data, hidden])
 
   const position = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
-  // Only the busiest few nodes carry a permanent label; the rest label on hover/select.
-  const labeledIds = useMemo(
-    () => new Set([...(layout?.nodes ?? [])].sort((a, b) => b.degree - a.degree).slice(0, 20).map((node) => node.id)),
-    [layout],
-  )
   const visibleEdges = useMemo(
     () => (data ? data.edges.filter((edge) => position.has(edge.from) && position.has(edge.to)) : []),
     [data, position],
@@ -227,7 +222,7 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
                   opacity={dimmed ? 0.3 : 1}
                 >
                   <circle r={radius} fill={KIND_COLORS[node.kind] ?? KIND_COLORS.unknown} fillOpacity={0.85} stroke={selected === node.id ? '#d3c6aa' : '#2d353b'} strokeWidth={selected === node.id ? 2 : 0.5} />
-                  {(labeledIds.has(node.id) || selected === node.id || hovered === node.id) && (
+                  {(node.kind === 'session' || selected === node.id || hovered === node.id) && (
                     <text
                       x={(radius + 3) / view.k}
                       y={3 / view.k}

@@ -77,6 +77,14 @@ export default function SessionIndexViewer({ initialSessionId }: { initialSessio
   const currentTurn = current?.kind === 'turn' ? turns[current.i] : null
   const currentAgent = current?.kind === 'agent' ? agents[current.id] : null
 
+  // Deep-link a tab via ?tab=graph|timeline|agents|search.
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab')
+    if (requested === 'turns' || requested === 'agents' || requested === 'timeline' || requested === 'graph' || requested === 'search') {
+      setTab(requested as Tab)
+    }
+  }, [])
+
   // --- Catalog ---
   useEffect(() => {
     let cancelled = false

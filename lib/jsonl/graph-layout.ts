@@ -64,7 +64,7 @@ export function computeLayout(nodes: LayoutInputNode[], edges: LayoutInputEdge[]
   const links = edges
     .map((edge) => [index.get(edge.from), index.get(edge.to)] as const)
     .filter((pair): pair is readonly [number, number] => pair[0] !== undefined && pair[1] !== undefined)
-  const ideal = Math.sqrt((width * height) / nodes.length) * 0.5
+  const ideal = Math.sqrt((width * height) / nodes.length) * 0.85
 
   const disp = positions.map(() => ({ x: 0, y: 0 }))
   for (let step = 0; step < iterations; step += 1) {
