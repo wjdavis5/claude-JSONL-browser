@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 CREATE INDEX IF NOT EXISTS chunks_session ON chunks(session_id);
 CREATE INDEX IF NOT EXISTS chunks_hash ON chunks(text_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS chunks_identity ON chunks(session_id, parent_id, text_hash);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
   text,
