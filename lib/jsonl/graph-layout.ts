@@ -124,8 +124,8 @@ export function nodeViewTarget(nodeId: string): string | null {
 // Temporal layout (x = time)
 // ---------------------------------------------------------------------------
 
-const KIND_ROW: Record<string, number> = { session: 0, agent: 1, tool: 2, tool_result: 2, file: 3, pr: 3 }
-const ROW_LABELS = ['session', 'agents', 'tools', 'files / PRs']
+const PACK_X = 20
+const PACK_Y = 16
 
 export interface TimeLayoutNode extends LayoutInputNode {
   x: number
@@ -137,29 +137,44 @@ export interface TimeLayout {
   nodes: TimeLayoutNode[]
   width: number
   height: number
-  rows: string[]
-  rowH: number
+  t0: number
+  t1: number
 }
 
 /**
- * Places nodes on a time axis: x = (ts - t0) * pxPerMs, y = a lane by kind.
- * Distance between nodes is therefore proportional to the time between events,
- * and changing pxPerMs (zoom) rescales the time axis.
+ * Places nodes on a time axis (x = (ts - t0) * pxPerMs) and packs them
+ * vertically around the centre line so nodes close in time stack instead of
+ * overlapping. No fixed lanes — the swarm shape itself shows density over time.
  */
 export function computeTimeLayout(
   nodes: Array<LayoutInputNode & { ts?: number }>,
-  options: { t0: number; t1: number; pxPerMs: number; rowH?: number },
+  options: { t0: number; t1: number; pxPerMs: number },
 ): TimeLayout {
-  const rowH = options.rowH ?? 120
-  const placed: TimeLayoutNode[] = nodes.map((node) => {
-    const row = KIND_ROW[node.kind] ?? 2
-    const x = (node.ts !== undefined ? (node.ts - options.t0) * options.pxPerMs : 0) + 40
-    let hash = 0
-    for (let i = 0; i < node.id.length; i += 1) hash = (hash * 31 + node.id.charCodeAt(i)) >>> 0
-    const jitter = ((hash % 1000) / 1000 - 0.5) * (rowH - 40)
-    return { ...node, x, y: row * rowH + rowH / 2 + jitter }
-  })
+  const ordered = [...nodes].sort((a, b) => (a.ts ?? options.t0) - (b.ts ?? options.t0))
+  const placed: Array<{ node: LayoutInputNode & { ts?: number }; x: number; y: number }> = []
+  for (const node of ordered) {
+    const x = node.ts !== undefined ? (node.ts - options.t0) * options.pxPerMs : 0
+    let y = 0
+    let k = 0
+    for (;;) {
+      const candidate = k === 0 ? 0 : Math.ceil(k / 2) * PACK_Y * (k % 2 ? 1 : -1)
+      const collides = placed.some((p) => Math.abs(p.x - x) < PACK_X && Math.abs(p.y - candidate) < PACK_Y)
+      if (!collides) {
+        y = candidate
+        break
+      }
+      k += 1
+      if (k > 4000) break
+    }
+    placed.push({ node, x, y })
+  }
+  const ys = placed.map((p) => p.y)
+  const minY = Math.min(...ys, 0)
+  const maxY = Math.max(...ys, 0)
+  const pad = 36
+  const height = maxY - minY + pad * 2
+  const out = placed.map((p) => ({ ...p.node, x: p.x + 40, y: p.y - minY + pad }))
   const width = Math.max(240, (options.t1 - options.t0) * options.pxPerMs + 80)
-  return { nodes: placed, width, height: ROW_LABELS.length * rowH, rows: ROW_LABELS, rowH }
+  return { nodes: out, width, height, t0: options.t0, t1: options.t1 }
 }
 

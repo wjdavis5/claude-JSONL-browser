@@ -17,12 +17,19 @@ const KIND_COLORS: Record<string, string> = {
 }
 
 const BASE_W = 1400
-const ROW_H = 120
+const AXIS = 30
 const MIN_ZOOM = 1
-const MAX_ZOOM = 4000
+const MAX_ZOOM = 6000
+const STEPS = [1000, 5000, 10000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000, 7200000, 21600000, 43200000, 86400000, 604800000]
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v))
+function niceStep(ms: number): number {
+  for (const step of STEPS) if (step >= ms) return step
+  return STEPS[STEPS.length - 1]
+}
+function formatTick(ms: number, span: number): string {
+  const d = new Date(ms)
+  if (span > 2 * 86400000) return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
 export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string; onOpenNode?: (nodeId: string) => void }) {
@@ -56,61 +63,67 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
 
   const kinds = useMemo(() => (data ? [...new Set(data.nodes.map((node) => node.kind))].sort() : []), [data])
 
-  const times = useMemo(() => {
+  const { t0, t1 } = useMemo(() => {
     const all = (data?.nodes ?? []).map((node) => node.ts).filter((ts): ts is number => typeof ts === 'number')
     const min = Math.min(...all)
     const max = Math.max(...all)
     return { t0: Number.isFinite(min) ? min : 0, t1: Number.isFinite(max) ? max : 1 }
   }, [data])
 
-  const span = Math.max(1, times.t1 - times.t0)
+  const span = Math.max(1, t1 - t0)
   const pxPerMs = (BASE_W / span) * zoom
+  const xOf = (ts: number): number => (ts - t0) * pxPerMs + 40
 
   const layout = useMemo(() => {
     if (!data) return null
     const nodes = data.nodes.filter((node) => !hidden.has(node.kind))
-    return computeTimeLayout(nodes, { t0: times.t0, t1: times.t1, pxPerMs, rowH: ROW_H })
-  }, [data, hidden, times.t0, times.t1, pxPerMs])
+    return computeTimeLayout(nodes, { t0, t1, pxPerMs })
+  }, [data, hidden, t0, t1, pxPerMs])
 
   const position = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
+  const nodeById = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
   const visibleEdges = useMemo(
     () => (data ? data.edges.filter((edge) => position.has(edge.from) && position.has(edge.to)) : []),
     [data, position],
   )
-  const nodeById = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
-
   const neighborsOf = useMemo(() => {
     const map = new Map<string, TimeLayoutNode[]>()
     for (const edge of visibleEdges) {
       const a = nodeById.get(edge.from)
       const b = nodeById.get(edge.to)
-      if (a && b) {
-        if (!map.has(edge.from)) map.set(edge.from, [])
-        if (!map.has(edge.to)) map.set(edge.to, [])
-        map.get(edge.from)?.push(b)
-        map.get(edge.to)?.push(a)
-      }
+      if (!a || !b) continue
+      if (!map.has(edge.from)) map.set(edge.from, [])
+      if (!map.has(edge.to)) map.set(edge.to, [])
+      map.get(edge.from)?.push(b)
+      map.get(edge.to)?.push(a)
     }
     return map
   }, [visibleEdges, nodeById])
-
   const highlight = useMemo(() => {
     const focus = selected ?? hovered
     if (!focus) return null
     return new Set<string>([focus, ...(neighborsOf.get(focus) ?? []).map((node) => node.id)])
   }, [selected, hovered, neighborsOf])
 
+  const ticks = useMemo(() => {
+    if (!layout) return []
+    const step = niceStep((span / layout.width) * 150)
+    const out: number[] = []
+    for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) out.push(t)
+    return out
+  }, [layout, span, t0, t1])
+
   const zoomAt = (factor: number, clientX?: number): void => {
     const el = scrollRef.current
     setZoom((current) => {
-      const next = clamp(current * factor, MIN_ZOOM, MAX_ZOOM)
+      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current * factor))
       if (el) {
         const rect = el.getBoundingClientRect()
         const px = clientX !== undefined ? clientX - rect.left : el.clientWidth / 2
         const cursorX = px + el.scrollLeft
-        const timeAtCursor = times.t0 + (cursorX - 40) / ((BASE_W / span) * current)
+        const timeAtCursor = t0 + (cursorX - 40) / ((BASE_W / span) * current)
         requestAnimationFrame(() => {
-          el.scrollLeft = (timeAtCursor - times.t0) * ((BASE_W / span) * next) + 40 - px
+          el.scrollLeft = (timeAtCursor - t0) * ((BASE_W / span) * next) + 40 - px
         })
       }
       return next
@@ -128,7 +141,7 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, span, times.t0])
+  }, [layout, span, t0])
 
   if (loading) {
     return (
@@ -151,13 +164,13 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
 
   const selectedNode = selected ? nodeById.get(selected) : undefined
   const openTarget = selected ? nodeViewTarget(selected) : null
-  const secondsPerScreen = (span / zoom) / 1000
+  const minutesPerScreen = Math.round(span / zoom / 60000)
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
         <span className="text-everforest-grey1">
-          {data.nodes.length} nodes on a time axis · x = time · scroll to move, wheel to zoom the time scale (now ~{Math.round(secondsPerScreen / 60)} min across the view)
+          {data.nodes.length} nodes · x = time · wheel to zoom the time scale (now ~{minutesPerScreen} min across the view) · hover/click a node
         </span>
         <span className="flex-1" />
         <button type="button" onClick={() => zoomAt(1.5)} className="p-1 rounded border border-everforest-bg4 hover:bg-everforest-bg2" aria-label="Zoom in"><Plus className="w-3.5 h-3.5" /></button>
@@ -183,23 +196,25 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
         ))}
       </div>
 
-      <div className="flex rounded-lg border border-everforest-bg4 bg-everforest-bg0 overflow-hidden">
-        <div className="sticky left-0 z-10 shrink-0 border-r border-everforest-bg4 bg-everforest-bg0" style={{ width: 96 }}>
-          {layout.rows.map((row) => (
-            <div key={row} className="px-2 text-[10px] text-everforest-grey2" style={{ height: ROW_H, lineHeight: `${ROW_H}px` }}>{row}</div>
-          ))}
-        </div>
-        <div ref={scrollRef} className="overflow-x-auto custom-scrollbar" style={{ maxHeight: 620 }}>
-          <svg width={layout.width} height={layout.height} className="block">
-            {layout.rows.map((row, i) => (
-              <rect key={row} x={0} y={i * ROW_H} width={layout.width} height={ROW_H} fill={i % 2 ? '#343f44' : '#2d353b'} />
+      <div ref={scrollRef} className="rounded-lg border border-everforest-bg4 bg-everforest-bg0 overflow-auto custom-scrollbar" style={{ maxHeight: 620 }}>
+        <div style={{ width: layout.width }}>
+          {/* datetime axis header (sticky on vertical scroll, scrolls with time) */}
+          <svg width={layout.width} height={AXIS} className="sticky top-0 z-10 block" style={{ background: '#232a2e' }}>
+            <line x1={0} y1={AXIS - 0.5} x2={layout.width} y2={AXIS - 0.5} stroke="#4f585e" />
+            {ticks.map((t) => (
+              <g key={t}>
+                <line x1={xOf(t)} y1={AXIS - 6} x2={xOf(t)} y2={AXIS} stroke="#4f585e" />
+                <text x={xOf(t) + 3} y={16} fontSize={10} fill="#9da9a0">{formatTick(t, span)}</text>
+              </g>
             ))}
+          </svg>
+          <svg width={layout.width} height={layout.height} className="block">
             {visibleEdges.map((edge, i) => {
               const from = position.get(edge.from)
               const to = position.get(edge.to)
               if (!from || !to) return null
               const lit = highlight ? highlight.has(edge.from) && highlight.has(edge.to) : false
-              return <line key={i} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={lit ? '#a7c080' : '#4f585e'} strokeWidth={lit ? 1.2 : 0.5} strokeOpacity={highlight && !lit ? 0.15 : 0.6} />
+              return <line key={i} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={lit ? '#a7c080' : '#4f585e'} strokeWidth={lit ? 1.2 : 0.5} strokeOpacity={highlight && !lit ? 0.12 : 0.55} />
             })}
             {layout.nodes.map((node) => {
               const radius = 4 + Math.min(10, node.degree)
@@ -226,7 +241,7 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
             <span className="text-sm text-everforest-fg">{selectedNode.kind}</span>
             <code className="text-xs text-everforest-aqua">{selectedNode.label}</code>
             <span className="text-[11px] text-everforest-grey1">degree {selectedNode.degree}</span>
-            {selectedNode.ts && <span className="text-[11px] text-everforest-grey1">{new Date(selectedNode.ts).toLocaleTimeString()}</span>}
+            {selectedNode.ts && <span className="text-[11px] text-everforest-grey1">{new Date(selectedNode.ts).toLocaleString()}</span>}
             <span className="flex-1" />
             {openTarget && onOpenNode && (
               <button type="button" onClick={() => onOpenNode(selectedNode.id)} className="px-2 py-1 rounded bg-everforest-bg-blue text-everforest-blue border border-everforest-blue/30 text-xs hover:bg-everforest-bg-blue/70">
