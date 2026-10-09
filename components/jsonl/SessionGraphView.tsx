@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Minus, Plus, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { computeTimeLayout, nodeViewTarget, type TimeLayoutNode } from '@/lib/jsonl/graph-layout'
+import { buildTimeScale, computeTimeLayout, nodeViewTarget, type TimeLayoutNode } from '@/lib/jsonl/graph-layout'
 import { fetchSessionGraph, type SessionGraphView as GraphData } from '@/lib/jsonl/session-index-client'
 
 const KIND_COLORS: Record<string, string> = {
@@ -63,22 +63,21 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
 
   const kinds = useMemo(() => (data ? [...new Set(data.nodes.map((node) => node.kind))].sort() : []), [data])
 
-  const { t0, t1 } = useMemo(() => {
-    const all = (data?.nodes ?? []).map((node) => node.ts).filter((ts): ts is number => typeof ts === 'number')
-    const min = Math.min(...all)
-    const max = Math.max(...all)
-    return { t0: Number.isFinite(min) ? min : 0, t1: Number.isFinite(max) ? max : 1 }
-  }, [data])
+  const scale = useMemo(
+    () => buildTimeScale((data?.nodes ?? []).map((node) => node.ts).filter((ts): ts is number => typeof ts === 'number')),
+    [data],
+  )
 
-  const span = Math.max(1, t1 - t0)
+  const span = scale.span
   const pxPerMs = (BASE_W / span) * zoom
-  const xOf = (ts: number): number => (ts - t0) * pxPerMs + 40
+  const xOf = (ts: number): number => scale.x(ts) * pxPerMs + 40
+  const xOfCompressed = (c: number): number => c * pxPerMs + 40
 
   const layout = useMemo(() => {
     if (!data) return null
     const nodes = data.nodes.filter((node) => !hidden.has(node.kind))
-    return computeTimeLayout(nodes, { t0, t1, pxPerMs })
-  }, [data, hidden, t0, t1, pxPerMs])
+    return computeTimeLayout(nodes, { scale, pxPerMs })
+  }, [data, hidden, scale, pxPerMs])
 
   const position = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
   const nodeById = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
@@ -109,9 +108,9 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     if (!layout) return []
     const step = niceStep((span / layout.width) * 150)
     const out: number[] = []
-    for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) out.push(t)
+    for (let c = 0; c <= span + 1; c += step) out.push(c)
     return out
-  }, [layout, span, t0, t1])
+  }, [layout, span])
 
   const zoomAt = (factor: number, clientX?: number): void => {
     const el = scrollRef.current
@@ -121,9 +120,9 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
         const rect = el.getBoundingClientRect()
         const px = clientX !== undefined ? clientX - rect.left : el.clientWidth / 2
         const cursorX = px + el.scrollLeft
-        const timeAtCursor = t0 + (cursorX - 40) / ((BASE_W / span) * current)
+        const compAtCursor = (cursorX - 40) / ((BASE_W / span) * current)
         requestAnimationFrame(() => {
-          el.scrollLeft = (timeAtCursor - t0) * ((BASE_W / span) * next) + 40 - px
+          el.scrollLeft = compAtCursor * ((BASE_W / span) * next) + 40 - px
         })
       }
       return next
@@ -141,7 +140,7 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, span, t0])
+  }, [layout, span])
 
   if (loading) {
     return (
@@ -164,7 +163,7 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
 
   const selectedNode = selected ? nodeById.get(selected) : undefined
   const openTarget = selected ? nodeViewTarget(selected) : null
-  const minutesPerScreen = Math.round(span / zoom / 60000)
+  const minutesPerScreen = Math.max(1, Math.round((scale.at(span / zoom) - scale.t0) / 60000))
 
   return (
     <div className="space-y-3">
@@ -201,10 +200,10 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
           {/* datetime axis header (sticky on vertical scroll, scrolls with time) */}
           <svg width={layout.width} height={AXIS} className="sticky top-0 z-10 block" style={{ background: '#232a2e' }}>
             <line x1={0} y1={AXIS - 0.5} x2={layout.width} y2={AXIS - 0.5} stroke="#4f585e" />
-            {ticks.map((t) => (
-              <g key={t}>
-                <line x1={xOf(t)} y1={AXIS - 6} x2={xOf(t)} y2={AXIS} stroke="#4f585e" />
-                <text x={xOf(t) + 3} y={16} fontSize={10} fill="#9da9a0">{formatTick(t, span)}</text>
+            {ticks.map((c) => (
+              <g key={c}>
+                <line x1={xOfCompressed(c)} y1={AXIS - 6} x2={xOfCompressed(c)} y2={AXIS} stroke="#4f585e" />
+                <text x={xOfCompressed(c) + 3} y={16} fontSize={10} fill="#9da9a0">{formatTick(scale.at(c), scale.t1 - scale.t0)}</text>
               </g>
             ))}
           </svg>

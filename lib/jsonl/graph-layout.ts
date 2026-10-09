@@ -141,19 +141,68 @@ export interface TimeLayout {
   t1: number
 }
 
+export interface TimeScale {
+  t0: number
+  t1: number
+  /** Compressed span (idle gaps capped). */
+  span: number
+  /** Maps a real timestamp to compressed time in [0, span]. */
+  x: (ts: number) => number
+  /** Maps compressed time back to a real timestamp. */
+  at: (compressed: number) => number
+}
+
 /**
- * Places nodes on a time axis (x = (ts - t0) * pxPerMs) and packs them
- * vertically around the centre line so nodes close in time stack instead of
- * overlapping. No fixed lanes — the swarm shape itself shows density over time.
+ * Builds a piecewise-linear time scale that compresses idle gaps larger than
+ * `gapThresholdMs` down to that threshold, so a multi-day session with sparse
+ * bursts still reads without huge empty stretches.
+ */
+export function buildTimeScale(events: number[], gapThresholdMs = 5 * 60 * 1000): TimeScale {
+  const sorted = [...events].filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
+  const t0 = sorted[0] ?? 0
+  const t1 = sorted[sorted.length - 1] ?? 1
+  const breaks: Array<{ real: number; comp: number }> = [{ real: t0, comp: 0 }]
+  let comp = 0
+  for (let i = 1; i < sorted.length; i += 1) {
+    comp += Math.min(Math.max(0, sorted[i] - sorted[i - 1]), gapThresholdMs)
+    breaks.push({ real: sorted[i], comp })
+  }
+  const span = Math.max(1, comp)
+  const locate = (value: number, key: 'real' | 'comp'): number => {
+    let lo = 0
+    let hi = breaks.length - 1
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1
+      if (breaks[mid][key] <= value) lo = mid
+      else hi = mid
+    }
+    const a = breaks[lo]
+    const b = breaks[hi]
+    const width = b[key] - a[key] || 1
+    const frac = (value - a[key]) / width
+    return a[key === 'real' ? 'comp' : 'real'] + frac * (b[key === 'real' ? 'comp' : 'real'] - a[key === 'real' ? 'comp' : 'real'])
+  }
+  return {
+    t0,
+    t1,
+    span,
+    x: (ts) => (ts <= t0 ? 0 : ts >= t1 ? span : Math.min(locate(ts, 'real'), span)),
+    at: (c) => (c <= 0 ? t0 : c >= span ? t1 : locate(c, 'comp')),
+  }
+}
+
+/**
+ * Places nodes on the (compressed) time axis and packs them vertically around
+ * the centre line so nodes close in time stack instead of overlapping.
  */
 export function computeTimeLayout(
   nodes: Array<LayoutInputNode & { ts?: number }>,
-  options: { t0: number; t1: number; pxPerMs: number },
+  options: { scale: TimeScale; pxPerMs: number },
 ): TimeLayout {
-  const ordered = [...nodes].sort((a, b) => (a.ts ?? options.t0) - (b.ts ?? options.t0))
+  const ordered = [...nodes].sort((a, b) => (a.ts ?? options.scale.t0) - (b.ts ?? options.scale.t0))
   const placed: Array<{ node: LayoutInputNode & { ts?: number }; x: number; y: number }> = []
   for (const node of ordered) {
-    const x = node.ts !== undefined ? (node.ts - options.t0) * options.pxPerMs : 0
+    const x = node.ts !== undefined ? options.scale.x(node.ts) * options.pxPerMs : 0
     let y = 0
     let k = 0
     for (;;) {
@@ -174,7 +223,7 @@ export function computeTimeLayout(
   const pad = 36
   const height = maxY - minY + pad * 2
   const out = placed.map((p) => ({ ...p.node, x: p.x + 40, y: p.y - minY + pad }))
-  const width = Math.max(240, (options.t1 - options.t0) * options.pxPerMs + 80)
-  return { nodes: out, width, height, t0: options.t0, t1: options.t1 }
+  const width = Math.max(240, options.scale.span * options.pxPerMs + 80)
+  return { nodes: out, width, height, t0: options.scale.t0, t1: options.scale.t1 }
 }
 
