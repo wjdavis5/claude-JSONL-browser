@@ -41,7 +41,14 @@ describe('retrieval route security', () => {
   })
 
   it('returns 503 when no database is present (client degrades)', async () => {
-    const res = await GET(new Request('http://localhost/api/session/search?q=x'), ctx(['search']))
-    expect(res.status).toBe(503)
+    const previous = process.env.SESSION_DB_PATH
+    process.env.SESSION_DB_PATH = '/nonexistent/ce-review/session.db'
+    try {
+      const res = await GET(new Request('http://localhost/api/session/search?q=x'), ctx(['search']))
+      expect(res.status).toBe(503)
+    } finally {
+      if (previous === undefined) delete process.env.SESSION_DB_PATH
+      else process.env.SESSION_DB_PATH = previous
+    }
   })
 })

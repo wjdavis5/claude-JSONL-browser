@@ -31,9 +31,14 @@ interface ChunkMeta {
   text: string
 }
 
-/** Wrap the user term as a quoted FTS5 phrase so operators cannot inject syntax. */
+/** Quote each query term so FTS5 operators cannot inject syntax; terms are AND-ed. */
 export function escapeFtsMatch(text: string): string {
-  return `"${text.replace(/"/g, '""')}"`
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(' ')
 }
 
 function truncate(text: string, limit: number): string {
@@ -82,7 +87,8 @@ export function hybridSearch(db: DatabaseSync, query: HybridQuery): HybridHit[] 
       const ids = knn.map((r) => Number(r.id))
       if (ids.length > 0) {
         const placeholders = ids.map(() => '?').join(',')
-        const rows = db.prepare(`SELECT id, parent_id, session_id, kind, text FROM chunks WHERE id IN (${placeholders})`).all(...ids) as unknown as ChunkMeta[]
+        const sql = `SELECT id, parent_id, session_id, kind, text FROM chunks WHERE id IN (${placeholders}) AND (? IS NULL OR session_id = ?)`
+        const rows = db.prepare(sql).all(...ids, query.sessionId ?? null, query.sessionId ?? null) as unknown as ChunkMeta[]
         const byId = new Map(rows.map((r) => [Number(r.id), r]))
         addLeg(ids.map((id) => byId.get(id)).filter((r): r is ChunkMeta => Boolean(r)), 'vec')
       }

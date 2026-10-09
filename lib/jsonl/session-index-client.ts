@@ -77,7 +77,8 @@ export async function fetchHybridSearch(
     const response = await fetch(`/api/session/search?${params.toString()}`)
     if (!response.ok) return null
     const json = (await response.json()) as { hits?: HybridSearchHit[] }
-    return json.hits ?? []
+    // Empty hybrid results fall back to the static scan rather than hiding it.
+    return json.hits && json.hits.length > 0 ? json.hits : null
   } catch {
     return null
   }

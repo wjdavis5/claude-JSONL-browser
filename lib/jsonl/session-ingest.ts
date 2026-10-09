@@ -106,6 +106,33 @@ export async function ingestSession(db: DatabaseSync, options: IngestOptions): P
     if (row.embedding_model === embedder.model && row.dims === embedder.dims) existing.set(row.text_hash, row.id)
   }
 
+  const prepared: Array<{ draft: ChunkDraft; hash: string; vector: Float32Array }> = []
+  const pending: Array<{ draft: ChunkDraft; hash: string }> = []
+  for (const draft of drafts) {
+    const hash = chunkKey(embedder.model, embedder.dims, draft.text)
+    const reusableId = existing.get(hash)
+    const vector = reusableId !== undefined ? readVec(db, reusableId) : null
+    if (vector) {
+      prepared.push({ draft, hash, vector })
+      stats.reused += 1
+    } else {
+      pending.push({ draft, hash })
+    }
+  }
+
+  // Embed OUTSIDE the write transaction so a slow LM Studio call never holds the lock.
+  let pendingVectors: Float32Array[] = []
+  let embedFailed = false
+  if (pending.length > 0) {
+    try {
+      pendingVectors = await embedder.embed(pending.map((entry) => entry.draft.text))
+    } catch (error) {
+      embedFailed = true
+      stats.partial += pending.length
+      options.onError?.(error as Error)
+    }
+  }
+
   db.exec('BEGIN')
   try {
     const upsertChunk = db.prepare(
@@ -121,43 +148,36 @@ export async function ingestSession(db: DatabaseSync, options: IngestOptions): P
     )
     const deleteVec = db.prepare('DELETE FROM vec_chunks WHERE id = ?')
     const insertVec = db.prepare('INSERT INTO vec_chunks(id, embedding) VALUES (?, ?)')
-    const setComplete = db.prepare("UPDATE chunks SET embedding_status = 'complete' WHERE id = ?")
-
     const storeVector = (id: number, vector: Float32Array): void => {
       deleteVec.run(BigInt(id))
       insertVec.run(BigInt(id), vector)
     }
-    const writeComplete = (draft: ChunkDraft, hash: string, vector: Float32Array): void => {
+
+    for (const { draft, hash, vector } of prepared) {
       const row = upsertChunk.get(sessionId, draft.parentId, draft.kind, draft.text, hash, 'complete', embedder.model, embedder.dims) as { id: number }
       storeVector(Number(row.id), vector)
     }
-
-    const pendingIds: Array<{ id: number; draft: ChunkDraft; hash: string }> = []
-    for (const draft of drafts) {
-      const hash = chunkKey(embedder.model, embedder.dims, draft.text)
-      const reusableId = existing.get(hash)
-      const vector = reusableId !== undefined ? readVec(db, reusableId) : null
-      if (vector) {
-        writeComplete(draft, hash, vector)
-        stats.reused += 1
-        continue
+    pending.forEach((entry, index) => {
+      const complete = !embedFailed && Boolean(pendingVectors[index])
+      const row = upsertChunk.get(sessionId, entry.draft.parentId, entry.draft.kind, entry.draft.text, entry.hash, complete ? 'complete' : 'partial', embedder.model, embedder.dims) as { id: number }
+      if (complete) {
+        storeVector(Number(row.id), pendingVectors[index])
+        stats.embedded += 1
       }
-      const row = upsertChunk.get(sessionId, draft.parentId, draft.kind, draft.text, hash, 'partial', embedder.model, embedder.dims) as { id: number }
-      pendingIds.push({ id: Number(row.id), draft, hash })
-    }
+    })
 
-    if (pendingIds.length > 0) {
-      try {
-        const vectors = await embedder.embed(pendingIds.map((entry) => entry.draft.text))
-        pendingIds.forEach((entry, index) => {
-          if (!vectors[index]) return
-          storeVector(entry.id, vectors[index])
-          setComplete.run(entry.id)
-          stats.embedded += 1
-        })
-      } catch (error) {
-        stats.partial += pendingIds.length
-        options.onError?.(error as Error)
+    // Prune chunks that this run no longer produces (edited/removed items).
+    const newKeys = new Set(drafts.map((draft) => `${draft.parentId}\u0000${chunkKey(embedder.model, embedder.dims, draft.text)}`))
+    const existingRows = db.prepare('SELECT id, parent_id, text_hash FROM chunks WHERE session_id = ?').all(sessionId) as unknown as Array<{
+      id: number
+      parent_id: string | null
+      text_hash: string
+    }>
+    const deleteChunk = db.prepare('DELETE FROM chunks WHERE id = ?')
+    for (const row of existingRows) {
+      if (!newKeys.has(`${row.parent_id}\u0000${row.text_hash}`)) {
+        deleteVec.run(BigInt(row.id))
+        deleteChunk.run(row.id)
       }
     }
     db.exec('COMMIT')

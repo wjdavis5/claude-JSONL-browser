@@ -48,17 +48,28 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
   const { hybridSearch, graphExpandedSearch } = await import('../../../../lib/jsonl/session-retrieve')
   const { createLmStudioEmbedder } = await import('../../../../lib/jsonl/session-embed')
 
-  const { db } = openDatabase(dbPath)
-  let vector: Float32Array | undefined
+  let opened: ReturnType<typeof openDatabase>
   try {
-    const embedder = createLmStudioEmbedder()
-    vector = await embedder.embedQuery?.(q)
+    opened = openDatabase(dbPath)
   } catch {
-    /* lexical-only when LM Studio is unavailable */
+    return Response.json({ error: 'database unavailable' }, { status: 503 })
   }
-  const hits = graph
-    ? graphExpandedSearch(db, { text: q, vector, k, sessionId })
-    : hybridSearch(db, { text: q, vector, k, sessionId })
-  db.close()
-  return Response.json({ hits })
+  const db = opened.db
+  try {
+    let vector: Float32Array | undefined
+    try {
+      const embedder = createLmStudioEmbedder()
+      vector = await embedder.embedQuery?.(q)
+    } catch {
+      /* lexical-only when LM Studio is unavailable */
+    }
+    const hits = graph
+      ? graphExpandedSearch(db, { text: q, vector, k, sessionId })
+      : hybridSearch(db, { text: q, vector, k, sessionId })
+    return Response.json({ hits })
+  } catch {
+    return Response.json({ error: 'retrieval failed' }, { status: 503 })
+  } finally {
+    db.close()
+  }
 }

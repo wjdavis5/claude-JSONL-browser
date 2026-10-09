@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS edges (
 );
 CREATE INDEX IF NOT EXISTS edges_from_type ON edges(from_id, type);
 CREATE INDEX IF NOT EXISTS edges_to_type ON edges(to_id, type);
+CREATE UNIQUE INDEX IF NOT EXISTS edges_identity ON edges(from_id, to_id, type);
 `
 
 export function vecSchemaSql(dims: number = VECTOR_DIMS): string {

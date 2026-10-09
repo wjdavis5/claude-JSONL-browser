@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { chmodSync } from 'node:fs'
 import * as sqliteVecNs from 'sqlite-vec'
 import {
   BASE_SCHEMA_SQL,
@@ -67,7 +68,24 @@ export function openDatabase(path: string, options: OpenOptions = {}): OpenResul
   } catch (error) {
     vecError = `sqlite-vec extension failed to load: ${(error as Error).message}`
   }
+  // Extension loading is only needed to load sqlite-vec; close the gate afterward.
+  try {
+    ;(db as unknown as { enableLoadExtension?: (on: boolean) => void }).enableLoadExtension?.(false)
+  } catch {
+    /* older driver */
+  }
+  try {
+    db.exec('PRAGMA journal_mode=WAL')
+    db.exec('PRAGMA busy_timeout=5000')
+  } catch {
+    /* pragmas unsupported */
+  }
   migrate(db, { vecAvailable, vectorDims: options.vectorDims })
   assertCompatible(db)
+  try {
+    chmodSync(path, 0o600)
+  } catch {
+    /* best effort: file may be read-only or not yet flushed */
+  }
   return { db, vecAvailable, vecError }
 }

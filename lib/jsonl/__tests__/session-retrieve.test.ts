@@ -16,12 +16,12 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true })
 })
 
-function seed(db: DatabaseSync, text: string, vector?: Float32Array): number {
+function seed(db: DatabaseSync, text: string, vector?: Float32Array, sessionId = 's1'): number {
   const info = db
     .prepare(
-      "INSERT INTO chunks(session_id, parent_id, kind, text, text_hash, embedding_status, embedding_model, dims) VALUES ('s1', ?, 'tool', ?, ?, 'complete', 'm', 2)",
+      "INSERT INTO chunks(session_id, parent_id, kind, text, text_hash, embedding_status, embedding_model, dims) VALUES (?, ?, 'tool', ?, ?, 'complete', 'm', 2)",
     )
-    .run(text, text, text)
+    .run(sessionId, text, text, text)
   const id = Number(info.lastInsertRowid)
   if (vector) db.prepare('INSERT INTO vec_chunks(id, embedding) VALUES (?, ?)').run(BigInt(id), vector)
   return id
@@ -62,6 +62,17 @@ describe('hybrid search', () => {
     seed(db, 'edited lib/session-index.ts today')
     const hits = hybridSearch(db, { text: 'dex.ts' })
     expect(hits.some((h) => h.legs.includes('trigram'))).toBe(true)
+    db.close()
+  })
+
+  it('scopes results to a session, including the vector leg', () => {
+    const db = freshDb()
+    const vector = new Float32Array([1, 0])
+    seed(db, 'alpha in one', vector, 's1')
+    seed(db, 'alpha in two', vector, 's2')
+    const hits = hybridSearch(db, { text: 'alpha', vector, sessionId: 's1' })
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits.every((h) => h.sessionId === 's1')).toBe(true)
     db.close()
   })
 })

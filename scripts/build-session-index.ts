@@ -28,7 +28,12 @@ import {
   type SearchDoc,
   type SessionCatalog,
   type SessionCatalogEntry,
+  type SessionManifest,
 } from '../lib/jsonl/session-index.ts'
+import { openDatabase } from '../lib/jsonl/session-db-node.ts'
+import { extractSessionGraph, type GraphItem } from '../lib/jsonl/session-db.ts'
+import { ingestSession, type IngestItem } from '../lib/jsonl/session-ingest.ts'
+import { createLmStudioEmbedder } from '../lib/jsonl/session-embed.ts'
 
 interface Args {
   input: string
@@ -36,10 +41,11 @@ interface Args {
   title?: string
   shard: number
   limitAgents: number
+  noDb: boolean
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { input: '', out: '', shard: 12, limitAgents: 0 }
+  const args: Args = { input: '', out: '', shard: 12, limitAgents: 0, noDb: false }
   const rest: string[] = []
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i]
@@ -47,6 +53,7 @@ function parseArgs(argv: string[]): Args {
     else if (token === '--title') args.title = argv[++i]
     else if (token === '--shard') args.shard = Number(argv[++i]) || 12
     else if (token === '--limit-agents') args.limitAgents = Number(argv[++i]) || 0
+    else if (token === '--no-db') args.noDb = true
     else rest.push(token)
   }
   args.input = rest[0] || ''
@@ -128,7 +135,38 @@ function writeJson(path: string, value: unknown): number {
   return Buffer.byteLength(json)
 }
 
-function main() {
+async function buildDatabase(sessionId: string, items: IngestItem[], manifest: SessionManifest): Promise<void> {
+  const dbPath = join(process.cwd(), 'data', 'session.db')
+  mkdirSync(dirname(dbPath), { recursive: true })
+  const { db, vecAvailable } = openDatabase(dbPath)
+  try {
+    db.prepare(
+      'INSERT OR REPLACE INTO sessions(id, title, git_branch, cwd, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(sessionId, manifest.title ?? null, manifest.gitBranch ?? null, manifest.cwd ?? null, manifest.sessionStart ?? null, manifest.sessionEnd ?? null)
+
+    const graph = extractSessionGraph(
+      sessionId,
+      items.map((item) => ({ item: item as unknown as GraphItem, parentId: item.parentId })),
+    )
+    const insertNode = db.prepare('INSERT OR REPLACE INTO nodes(id, kind, props) VALUES (?, ?, ?)')
+    for (const node of graph.nodes) insertNode.run(node.id, node.kind, node.props ? JSON.stringify(node.props) : null)
+    const insertEdge = db.prepare('INSERT OR IGNORE INTO edges(from_id, to_id, type, props) VALUES (?, ?, ?, ?)')
+    for (const edge of graph.edges) insertEdge.run(edge.from, edge.to, edge.type, edge.props ? JSON.stringify(edge.props) : null)
+
+    if (!vecAvailable) {
+      console.log('[index] db       sqlite-vec unavailable; skipping ingest')
+      return
+    }
+    const stats = await ingestSession(db, { sessionId, items, embedder: createLmStudioEmbedder() })
+    console.log(
+      `[index] db       chunks ${stats.chunks} · embedded ${stats.embedded} · reused ${stats.reused} · partial ${stats.partial} · nodes ${graph.nodes.length} · edges ${graph.edges.length}`,
+    )
+  } finally {
+    db.close()
+  }
+}
+
+async function main() {
   const started = Date.now()
   const args = parseArgs(process.argv.slice(2))
   const { mainPath, subagentsDir, sessionId } = resolveInputs(args.input)
@@ -151,6 +189,7 @@ function main() {
   // Pass 1: agent bodies + links (streamed to keep memory bounded).
   const agentHeaders: AgentHeader[] = []
   const searchDocs: SearchDoc[] = [...main.searchDocs]
+  const agentItems: IngestItem[] = []
   let agentCount = 0
   if (subagentsDir) {
     let files = collectAgentFiles(subagentsDir)
@@ -165,6 +204,9 @@ function main() {
           if (!allLinks.has(childId)) allLinks.set(childId, link)
         }
         writeJson(join(outDir, 'agents', `${id}.json`), { id, header: built.header, items: built.items })
+        built.items.forEach((item, index) => {
+          agentItems.push({ parentId: `a:${id}:${index}`, kind: item.k, name: item.name, input: item.input, result: item.result, text: item.text })
+        })
         agentHeaders.push(built.header)
         searchDocs.push(built.searchDoc)
         agentCount += 1
@@ -228,6 +270,16 @@ function main() {
   catalog.sessions.sort((a, b) => (b.sessionStart || '').localeCompare(a.sessionStart || ''))
   writeJson(catalogPath, catalog)
 
+  if (!args.noDb) {
+    const mainItems: IngestItem[] = []
+    for (const turn of main.turns) {
+      turn.items.forEach((item, index) => {
+        mainItems.push({ parentId: `t${turn.i}:${index}`, kind: item.k, name: item.name, input: item.input, result: item.result, text: item.text })
+      })
+    }
+    await buildDatabase(sessionId, [...mainItems, ...agentItems], main.manifest)
+  }
+
   const seconds = ((Date.now() - started) / 1000).toFixed(1)
   console.log(
     `[index] done in ${seconds}s · turns ${main.manifest.counts.turns} · items ${main.manifest.counts.items} · ` +
@@ -238,4 +290,7 @@ function main() {
   console.log(`[index] output ${outDir}`)
 }
 
-main()
+main().catch((error) => {
+  console.error('[index] fatal:', error)
+  process.exit(1)
+})
