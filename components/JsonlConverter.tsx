@@ -700,6 +700,13 @@ export default function JsonlConverter() {
             )}
             <FileText className="w-6 h-6 text-everforest-green flex-shrink-0" />
             <h1 className="text-lg sm:text-xl font-medium text-everforest-fg truncate">JSONL Browser</h1>
+            <a
+              href="/sessions"
+              className="px-3 py-1.5 bg-everforest-bg2 text-everforest-aqua border border-everforest-bg4 rounded-md text-xs flex items-center gap-1.5 hover:bg-everforest-bg3 transition-colors"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Indexed Sessions</span>
+            </a>
           </div>
 
           {currentFile?.markdown && (
