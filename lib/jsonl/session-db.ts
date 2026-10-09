@@ -78,6 +78,23 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
   INSERT INTO fts_chunks(rowid, text) VALUES (new.id, new.text);
 END;
 
+CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_tri USING fts5(
+  text,
+  content='chunks',
+  content_rowid='id',
+  tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS chunks_ai_tri AFTER INSERT ON chunks BEGIN
+  INSERT INTO fts_chunks_tri(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_ad_tri AFTER DELETE ON chunks BEGIN
+  INSERT INTO fts_chunks_tri(fts_chunks_tri, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_au_tri AFTER UPDATE ON chunks BEGIN
+  INSERT INTO fts_chunks_tri(fts_chunks_tri, rowid, text) VALUES ('delete', old.id, old.text);
+  INSERT INTO fts_chunks_tri(rowid, text) VALUES (new.id, new.text);
+END;
+
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
