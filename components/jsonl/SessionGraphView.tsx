@@ -28,7 +28,8 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
   const [view, setView] = useState({ x: 0, y: 0, k: 1 })
 
   const svgRef = useRef<SVGSVGElement>(null)
-  const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null)
+  const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
+  const dragMoved = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -56,10 +57,15 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     const nodes = data.nodes.filter((node) => !hidden.has(node.kind))
     const keep = new Set(nodes.map((node) => node.id))
     const edges = data.edges.filter((edge) => keep.has(edge.from) && keep.has(edge.to))
-    return computeLayout(nodes, edges, { width: 1000, height: 640, seed: 7 })
+    return computeLayout(nodes, edges, { width: 1400, height: 900, seed: 7 })
   }, [data, hidden])
 
   const position = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
+  // Only the busiest few nodes carry a permanent label; the rest label on hover/select.
+  const labeledIds = useMemo(
+    () => new Set([...(layout?.nodes ?? [])].sort((a, b) => b.degree - a.degree).slice(0, 20).map((node) => node.id)),
+    [layout],
+  )
   const visibleEdges = useMemo(
     () => (data ? data.edges.filter((edge) => position.has(edge.from) && position.has(edge.to)) : []),
     [data, position],
@@ -118,25 +124,24 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     })
   }
 
-  const onPointerDown = (event: React.PointerEvent<SVGSVGElement>): void => {
-    ;(event.currentTarget as SVGSVGElement).setPointerCapture(event.pointerId)
-    drag.current = { x: event.clientX, y: event.clientY, vx: view.x, vy: view.y, moved: false }
+  const onMouseDown = (event: React.MouseEvent<SVGSVGElement>): void => {
+    dragMoved.current = false
+    drag.current = { x: event.clientX, y: event.clientY, vx: view.x, vy: view.y }
   }
-  const onPointerMove = (event: React.PointerEvent<SVGSVGElement>): void => {
+  const onMouseMove = (event: React.MouseEvent<SVGSVGElement>): void => {
     if (!drag.current || !svgRef.current || !layout) return
     const rect = svgRef.current.getBoundingClientRect()
     const dx = ((event.clientX - drag.current.x) / rect.width) * layout.width
     const dy = ((event.clientY - drag.current.y) / rect.height) * layout.height
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.current.moved = true
+    if (Math.abs(dx) + Math.abs(dy) > 4) dragMoved.current = true
     const base = drag.current
     setView((current) => ({ ...current, x: base.vx + dx, y: base.vy + dy }))
   }
-  const onPointerUp = (event: React.PointerEvent<SVGSVGElement>): void => {
-    ;(event.currentTarget as SVGSVGElement).releasePointerCapture(event.pointerId)
+  const endDrag = (): void => {
     drag.current = null
   }
   const selectNode = (id: string): void => {
-    if (drag.current?.moved) return
+    if (dragMoved.current) return
     setSelected((current) => (current === id ? null : id))
   }
 
@@ -195,9 +200,10 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
           ref={svgRef}
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           className="w-full h-[620px] cursor-grab active:cursor-grabbing touch-none select-none"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={endDrag}
+          onMouseLeave={endDrag}
         >
           <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
             {visibleEdges.map((edge, i) => {
@@ -221,9 +227,18 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
                   opacity={dimmed ? 0.3 : 1}
                 >
                   <circle r={radius} fill={KIND_COLORS[node.kind] ?? KIND_COLORS.unknown} fillOpacity={0.85} stroke={selected === node.id ? '#d3c6aa' : '#2d353b'} strokeWidth={selected === node.id ? 2 : 0.5} />
-                  {(node.degree > 3 || selected === node.id || hovered === node.id) && (
-                    <text x={radius + 2} y={3} fontSize={9} fill="#9da9a0" pointerEvents="none">
-                      {node.label.length > 28 ? `${node.label.slice(0, 28)}…` : node.label}
+                  {(labeledIds.has(node.id) || selected === node.id || hovered === node.id) && (
+                    <text
+                      x={(radius + 3) / view.k}
+                      y={3 / view.k}
+                      fontSize={11 / view.k}
+                      fill="#d3c6aa"
+                      stroke="#232a2e"
+                      strokeWidth={3 / view.k}
+                      paintOrder="stroke"
+                      pointerEvents="none"
+                    >
+                      {node.label.length > 40 ? `${node.label.slice(0, 40)}…` : node.label}
                     </text>
                   )}
                 </g>
