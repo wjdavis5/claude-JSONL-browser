@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2, Minus, Plus, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { computeLayout, nodeViewTarget } from '@/lib/jsonl/graph-layout'
+import { computeLayout, nodeViewTarget, type LayoutNode } from '@/lib/jsonl/graph-layout'
 import { fetchSessionGraph, type SessionGraphView as GraphData } from '@/lib/jsonl/session-index-client'
 
 const KIND_COLORS: Record<string, string> = {
@@ -16,15 +16,26 @@ const KIND_COLORS: Record<string, string> = {
   unknown: '#859289',
 }
 
+const MIN_ZOOM = 0.2
+const MAX_ZOOM = 8
+
 export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string; onOpenNode?: (nodeId: string) => void }) {
   const [data, setData] = useState<GraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const [selected, setSelected] = useState<string | null>(null)
+  const [hovered, setHovered] = useState<string | null>(null)
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 })
+
+  const svgRef = useRef<SVGSVGElement>(null)
+  const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setHidden(new Set())
+    setSelected(null)
+    setView({ x: 0, y: 0, k: 1 })
     fetchSessionGraph(sessionId)
       .then((result) => {
         if (!cancelled) {
@@ -45,7 +56,7 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     const nodes = data.nodes.filter((node) => !hidden.has(node.kind))
     const keep = new Set(nodes.map((node) => node.id))
     const edges = data.edges.filter((edge) => keep.has(edge.from) && keep.has(edge.to))
-    return computeLayout(nodes, edges, { width: 900, height: 620, seed: 7 })
+    return computeLayout(nodes, edges, { width: 1000, height: 640, seed: 7 })
   }, [data, hidden])
 
   const position = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
@@ -53,6 +64,81 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     () => (data ? data.edges.filter((edge) => position.has(edge.from) && position.has(edge.to)) : []),
     [data, position],
   )
+
+  const nodeById = useMemo(() => new Map((layout?.nodes ?? []).map((node) => [node.id, node])), [layout])
+  const neighborsOf = useCallback(
+    (id: string): LayoutNode[] => {
+      const ids = new Set<string>()
+      for (const edge of visibleEdges) {
+        if (edge.from === id) ids.add(edge.to)
+        else if (edge.to === id) ids.add(edge.from)
+      }
+      return [...ids].map((nid) => nodeById.get(nid)).filter((node): node is LayoutNode => Boolean(node))
+    },
+    [visibleEdges, nodeById],
+  )
+
+  const highlightNodes = useMemo(() => {
+    const focus = selected ?? hovered
+    if (!focus) return null
+    const set = new Set<string>([focus, ...neighborsOf(focus).map((node) => node.id)])
+    return set
+  }, [selected, hovered, neighborsOf])
+
+  // Wheel zoom around the cursor (native listener so preventDefault works).
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el || !layout) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const rect = el.getBoundingClientRect()
+      const px = ((event.clientX - rect.left) / rect.width) * layout.width
+      const py = ((event.clientY - rect.top) / rect.height) * layout.height
+      setView((current) => {
+        const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15
+        const k = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current.k * factor))
+        const wx = (px - current.x) / current.k
+        const wy = (py - current.y) / current.k
+        return { k, x: px - wx * k, y: py - wy * k }
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [layout])
+
+  const zoomBy = (factor: number): void => {
+    if (!layout) return
+    const cx = layout.width / 2
+    const cy = layout.height / 2
+    setView((current) => {
+      const k = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current.k * factor))
+      const wx = (cx - current.x) / current.k
+      const wy = (cy - current.y) / current.k
+      return { k, x: cx - wx * k, y: cy - wy * k }
+    })
+  }
+
+  const onPointerDown = (event: React.PointerEvent<SVGSVGElement>): void => {
+    ;(event.currentTarget as SVGSVGElement).setPointerCapture(event.pointerId)
+    drag.current = { x: event.clientX, y: event.clientY, vx: view.x, vy: view.y, moved: false }
+  }
+  const onPointerMove = (event: React.PointerEvent<SVGSVGElement>): void => {
+    if (!drag.current || !svgRef.current || !layout) return
+    const rect = svgRef.current.getBoundingClientRect()
+    const dx = ((event.clientX - drag.current.x) / rect.width) * layout.width
+    const dy = ((event.clientY - drag.current.y) / rect.height) * layout.height
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.current.moved = true
+    const base = drag.current
+    setView((current) => ({ ...current, x: base.vx + dx, y: base.vy + dy }))
+  }
+  const onPointerUp = (event: React.PointerEvent<SVGSVGElement>): void => {
+    ;(event.currentTarget as SVGSVGElement).releasePointerCapture(event.pointerId)
+    drag.current = null
+  }
+  const selectNode = (id: string): void => {
+    if (drag.current?.moved) return
+    setSelected((current) => (current === id ? null : id))
+  }
 
   if (loading) {
     return (
@@ -73,11 +159,17 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
     return <div className="p-4 text-sm text-everforest-grey1">No nodes to display.</div>
   }
 
+  const selectedNode = selected ? nodeById.get(selected) : undefined
+  const openTarget = selected ? nodeViewTarget(selected) : null
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="text-everforest-grey1">{data.nodes.length} nodes · {data.edges.length} edges{data.truncated ? ' (capped)' : ''}</span>
+        <span className="text-everforest-grey1">{data.nodes.length} nodes · {data.edges.length} edges{data.truncated ? ' (capped)' : ''} · drag to pan · scroll to zoom</span>
         <span className="flex-1" />
+        <button type="button" onClick={() => zoomBy(1.25)} className="p-1 rounded border border-everforest-bg4 hover:bg-everforest-bg2" aria-label="Zoom in"><Plus className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => zoomBy(1 / 1.25)} className="p-1 rounded border border-everforest-bg4 hover:bg-everforest-bg2" aria-label="Zoom out"><Minus className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => setView({ x: 0, y: 0, k: 1 })} className="p-1 rounded border border-everforest-bg4 hover:bg-everforest-bg2" aria-label="Reset view"><RotateCcw className="w-3.5 h-3.5" /></button>
         {kinds.map((kind) => (
           <button
             key={kind}
@@ -90,10 +182,7 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
                 return next
               })
             }
-            className={cn(
-              'px-2 py-0.5 rounded border transition-opacity',
-              hidden.has(kind) ? 'opacity-40 border-everforest-bg4' : 'border-everforest-bg4',
-            )}
+            className={cn('px-2 py-0.5 rounded border transition-opacity', hidden.has(kind) ? 'opacity-40 border-everforest-bg4' : 'border-everforest-bg4')}
           >
             <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: KIND_COLORS[kind] ?? KIND_COLORS.unknown }} />
             {kind}
@@ -102,34 +191,78 @@ export function SessionGraphView({ sessionId, onOpenNode }: { sessionId: string;
       </div>
 
       <div className="rounded-lg border border-everforest-bg4 bg-everforest-bg0 overflow-hidden">
-        <svg viewBox={`0 0 ${layout.width} ${layout.height}`} className="w-full h-[620px]">
-          {visibleEdges.map((edge, i) => {
-            const from = position.get(edge.from)
-            const to = position.get(edge.to)
-            if (!from || !to) return null
-            return <line key={i} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#4f585e" strokeWidth={0.6} />
-          })}
-          {layout.nodes.map((node) => {
-            const radius = 4 + Math.min(10, node.degree)
-            const target = nodeViewTarget(node.id)
-            return (
-              <g
-                key={node.id}
-                transform={`translate(${node.x},${node.y})`}
-                onClick={() => target && onOpenNode?.(node.id)}
-                className={target ? 'cursor-pointer' : undefined}
-              >
-                <circle r={radius} fill={KIND_COLORS[node.kind] ?? KIND_COLORS.unknown} fillOpacity={0.85} stroke="#2d353b" strokeWidth={0.5} />
-                {node.degree > 3 && (
-                  <text x={radius + 2} y={3} fontSize={9} fill="#9da9a0">
-                    {node.label.length > 28 ? `${node.label.slice(0, 28)}…` : node.label}
-                  </text>
-                )}
-              </g>
-            )
-          })}
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          className="w-full h-[620px] cursor-grab active:cursor-grabbing touch-none select-none"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        >
+          <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+            {visibleEdges.map((edge, i) => {
+              const from = position.get(edge.from)
+              const to = position.get(edge.to)
+              if (!from || !to) return null
+              const lit = highlightNodes ? highlightNodes.has(edge.from) && highlightNodes.has(edge.to) : false
+              return <line key={i} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={lit ? '#a7c080' : '#4f585e'} strokeWidth={lit ? 1.2 : 0.6} strokeOpacity={highlightNodes && !lit ? 0.25 : 1} />
+            })}
+            {layout.nodes.map((node) => {
+              const radius = 4 + Math.min(12, node.degree)
+              const dimmed = highlightNodes ? !highlightNodes.has(node.id) : false
+              return (
+                <g
+                  key={node.id}
+                  transform={`translate(${node.x},${node.y})`}
+                  className="cursor-pointer"
+                  onClick={() => selectNode(node.id)}
+                  onMouseEnter={() => setHovered(node.id)}
+                  onMouseLeave={() => setHovered((current) => (current === node.id ? null : current))}
+                  opacity={dimmed ? 0.3 : 1}
+                >
+                  <circle r={radius} fill={KIND_COLORS[node.kind] ?? KIND_COLORS.unknown} fillOpacity={0.85} stroke={selected === node.id ? '#d3c6aa' : '#2d353b'} strokeWidth={selected === node.id ? 2 : 0.5} />
+                  {(node.degree > 3 || selected === node.id || hovered === node.id) && (
+                    <text x={radius + 2} y={3} fontSize={9} fill="#9da9a0" pointerEvents="none">
+                      {node.label.length > 28 ? `${node.label.slice(0, 28)}…` : node.label}
+                    </text>
+                  )}
+                </g>
+              )
+            })}
+          </g>
         </svg>
       </div>
+
+      {selectedNode && (
+        <div className="rounded-lg border border-everforest-aqua/30 bg-everforest-bg1/60 p-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: KIND_COLORS[selectedNode.kind] ?? KIND_COLORS.unknown }} />
+            <span className="text-sm text-everforest-fg">{selectedNode.kind}</span>
+            <code className="text-xs text-everforest-aqua">{selectedNode.label}</code>
+            <span className="text-[11px] text-everforest-grey1">degree {selectedNode.degree}</span>
+            <span className="flex-1" />
+            {openTarget && onOpenNode && (
+              <button type="button" onClick={() => onOpenNode(selectedNode.id)} className="px-2 py-1 rounded bg-everforest-bg-blue text-everforest-blue border border-everforest-blue/30 text-xs hover:bg-everforest-bg-blue/70">
+                Open in transcript
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {neighborsOf(selectedNode.id).slice(0, 40).map((neighbor) => (
+              <button
+                key={neighbor.id}
+                type="button"
+                onClick={() => setSelected(neighbor.id)}
+                className="px-1.5 py-0.5 rounded bg-everforest-bg2 text-everforest-grey2 text-[10px] hover:bg-everforest-bg3"
+              >
+                <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ background: KIND_COLORS[neighbor.kind] ?? KIND_COLORS.unknown }} />
+                {neighbor.kind}: {neighbor.label.length > 24 ? `${neighbor.label.slice(0, 24)}…` : neighbor.label}
+              </button>
+            ))}
+            {neighborsOf(selectedNode.id).length === 0 && <span className="text-[11px] text-everforest-grey1">No connections in view.</span>}
+          </div>
+        </div>
+      )}
 
       {data.duplicates.length > 0 && (
         <div className="rounded-lg border border-everforest-yellow/30 bg-everforest-bg1/60 p-3">
