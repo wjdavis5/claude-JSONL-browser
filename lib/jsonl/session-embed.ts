@@ -18,6 +18,8 @@ export interface Embedder {
   dims: number
   /** Embed document text (ingest). */
   embed(texts: string[]): Promise<Float32Array[]>
+  /** Embed a retrieval query (embeddinggemma's query role prompt). */
+  embedQuery?(text: string): Promise<Float32Array>
 }
 
 export function truncateAndNormalize(vector: ArrayLike<number>, dims: number): Float32Array {
@@ -53,17 +55,24 @@ export function createLmStudioEmbedder(options: LmStudioOptions = {}): Embedder 
     async embed(texts: string[]): Promise<Float32Array[]> {
       const vectors: Float32Array[] = []
       for (const text of texts) {
-        const response = await fetch(`${baseUrl}/v1/embeddings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, input: `title: none | text: ${text}` }),
-        })
-        if (!response.ok) throw new Error(`LM Studio embeddings failed: ${response.status}`)
-        const json = (await response.json()) as { data: Array<{ embedding: number[] }> }
-        if (!json.data?.[0]?.embedding) throw new Error('LM Studio returned no embedding')
-        vectors.push(truncateAndNormalize(json.data[0].embedding, dims))
+        vectors.push(await embedWithPrompt(`title: none | text: ${text}`))
       }
       return vectors
     },
+    async embedQuery(text: string): Promise<Float32Array> {
+      return embedWithPrompt(`task: search result | query: ${text}`)
+    },
+  }
+
+  async function embedWithPrompt(input: string): Promise<Float32Array> {
+    const response = await fetch(`${baseUrl}/v1/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input }),
+    })
+    if (!response.ok) throw new Error(`LM Studio embeddings failed: ${response.status}`)
+    const json = (await response.json()) as { data: Array<{ embedding: number[] }> }
+    if (!json.data?.[0]?.embedding) throw new Error('LM Studio returned no embedding')
+    return truncateAndNormalize(json.data[0].embedding, dims)
   }
 }
