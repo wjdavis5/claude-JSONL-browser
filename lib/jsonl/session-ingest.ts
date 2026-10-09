@@ -16,6 +16,8 @@ export interface IngestItem {
   input?: unknown
   result?: string
   agentId?: string
+  subagentType?: string
+  description?: string
 }
 
 export interface ChunkDraft {

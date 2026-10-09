@@ -144,9 +144,35 @@ async function buildDatabase(sessionId: string, items: IngestItem[], manifest: S
       'INSERT OR REPLACE INTO sessions(id, title, git_branch, cwd, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(sessionId, manifest.title ?? null, manifest.gitBranch ?? null, manifest.cwd ?? null, manifest.sessionStart ?? null, manifest.sessionEnd ?? null)
 
+    // Clear this session's graph before rewriting (item node ids can change).
+    const sessionNode = `session:${sessionId}`
+    const toolPrefix = `tool:${sessionId}:%`
+    const agentPrefix = `agent:${sessionId}:%`
+    db.prepare('DELETE FROM edges WHERE from_id = ? OR from_id LIKE ? OR from_id LIKE ? OR to_id = ? OR to_id LIKE ? OR to_id LIKE ?').run(
+      sessionNode,
+      toolPrefix,
+      agentPrefix,
+      sessionNode,
+      toolPrefix,
+      agentPrefix,
+    )
+    db.prepare('DELETE FROM nodes WHERE id = ? OR id LIKE ? OR id LIKE ?').run(sessionNode, toolPrefix, agentPrefix)
+
     const graph = extractSessionGraph(
       sessionId,
-      items.map((item) => ({ item: item as unknown as GraphItem, parentId: item.parentId })),
+      items.map((item) => ({
+        item: {
+          k: item.kind,
+          name: item.name,
+          input: item.input,
+          result: item.result,
+          agentId: item.agentId,
+          subagentType: item.subagentType,
+          description: item.description,
+          text: item.text,
+        } as GraphItem,
+        parentId: item.parentId,
+      })),
     )
     const insertNode = db.prepare('INSERT OR REPLACE INTO nodes(id, kind, props) VALUES (?, ?, ?)')
     for (const node of graph.nodes) insertNode.run(node.id, node.kind, node.props ? JSON.stringify(node.props) : null)
@@ -205,7 +231,17 @@ async function main() {
         }
         writeJson(join(outDir, 'agents', `${id}.json`), { id, header: built.header, items: built.items })
         built.items.forEach((item, index) => {
-          agentItems.push({ parentId: `a:${id}:${index}`, kind: item.k, name: item.name, input: item.input, result: item.result, text: item.text })
+          agentItems.push({
+            parentId: `a:${id}:${index}`,
+            kind: item.k,
+            name: item.name,
+            input: item.input,
+            result: item.result,
+            text: item.text,
+            agentId: item.agentId,
+            subagentType: item.subagentType,
+            description: item.description,
+          })
         })
         agentHeaders.push(built.header)
         searchDocs.push(built.searchDoc)
@@ -274,7 +310,17 @@ async function main() {
     const mainItems: IngestItem[] = []
     for (const turn of main.turns) {
       turn.items.forEach((item, index) => {
-        mainItems.push({ parentId: `t${turn.i}:${index}`, kind: item.k, name: item.name, input: item.input, result: item.result, text: item.text })
+        mainItems.push({
+          parentId: `t${turn.i}:${index}`,
+          kind: item.k,
+          name: item.name,
+          input: item.input,
+          result: item.result,
+          text: item.text,
+          agentId: item.agentId,
+          subagentType: item.subagentType,
+          description: item.description,
+        })
       })
     }
     await buildDatabase(sessionId, [...mainItems, ...agentItems], main.manifest)
